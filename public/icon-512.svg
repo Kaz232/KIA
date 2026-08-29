@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="128" fill="#05070c"/>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="none" stroke="#DAA520" stroke-width="8" stroke-opacity="0.6"/>
+  <circle cx="256" cy="256" r="160" fill="#090d16" stroke="#DAA520" stroke-width="4"/>
+  <path d="M160 256 L256 160 L352 256 L256 352 Z" fill="#DAA520" fill-opacity="0.15" stroke="#DAA520" stroke-width="6"/>
+  <text x="256" y="275" font-family="'Montserrat', sans-serif" font-weight="900" font-size="82" fill="#F8F9FA" text-anchor="middle" letter-spacing="4">GAG</text>
+  <text x="256" y="320" font-family="'Montserrat', sans-serif" font-weight="700" font-size="24" fill="#DAA520" text-anchor="middle" letter-spacing="8">VISUAL</text>
+  <circle cx="256" cy="120" r="10" fill="#DAA520"/>
+</svg>

@@ -1,0 +1,202 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net - Default Deny Catch-All
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Common Hardened Helper Primitives
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        (request.auth.token.email == "josemargourgel01@gmail.com") ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['SUPER_ADMIN', 'ADMIN'])
+      );
+    }
+
+    // ----------------------------------------------------
+    // User Profiles (/users/{userId})
+    // ----------------------------------------------------
+    function isValidUserProfile(data, targetUserId) {
+      return data.id is string && data.id.size() <= 128 && data.id == targetUserId &&
+             data.email is string && data.email.size() <= 256 &&
+             data.name is string && data.name.size() <= 120 &&
+             data.role in ['SUPER_ADMIN', 'ADMIN', 'EDITOR', 'OPERATOR', 'VIEWER'] &&
+             data.createdAt is string && data.createdAt.size() <= 100;
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+      
+      allow create: if isOwner(userId) && isValidId(userId) &&
+        isValidUserProfile(incoming(), userId) &&
+        (incoming().role in ['OPERATOR', 'VIEWER', 'EDITOR'] || isAdmin());
+
+      allow update: if (isOwner(userId) || isAdmin()) && isValidId(userId) &&
+        isValidUserProfile(incoming(), userId) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt &&
+        (isAdmin() || incoming().role == existing().role);
+
+      allow delete: if isAdmin();
+    }
+
+    // ----------------------------------------------------
+    // Operational Tasks (/tasks/{taskId})
+    // ----------------------------------------------------
+    function isValidTask(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 300 &&
+             data.status in ['TODO', 'IN_PROGRESS', 'REVIEW_REQUIRED', 'DONE', 'CANCELLED'] &&
+             data.priority in ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'] &&
+             data.createdBy is string && data.createdBy.size() <= 128 &&
+             data.createdAt is string && data.createdAt.size() <= 100 &&
+             (!('description' in data) || (data.description is string && data.description.size() <= 5000)) &&
+             (!('category' in data) || (data.category is string && data.category.size() <= 80)) &&
+             (!('assignedAgentId' in data) || (data.assignedAgentId is string && data.assignedAgentId.size() <= 128)) &&
+             (!('assignedUserId' in data) || (data.assignedUserId is string && data.assignedUserId.size() <= 128)) &&
+             (!('tags' in data) || (data.tags is list && data.tags.size() <= 20));
+    }
+
+    match /tasks/{taskId} {
+      allow get: if isSignedIn() && isValidId(taskId);
+      allow list: if isSignedIn();
+
+      allow create: if isSignedIn() && isValidId(taskId) &&
+        isValidTask(incoming()) &&
+        incoming().createdBy == request.auth.uid;
+
+      allow update: if isSignedIn() && isValidId(taskId) &&
+        isValidTask(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().createdAt == existing().createdAt &&
+        (
+          isAdmin() ||
+          existing().createdBy == request.auth.uid ||
+          (existing().assignedUserId == request.auth.uid &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt', 'tags'])) ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+        );
+
+      allow delete: if isAdmin() || (isSignedIn() && existing().createdBy == request.auth.uid);
+    }
+
+    // ----------------------------------------------------
+    // Scanned Documents (/scanned_docs/{docId})
+    // ----------------------------------------------------
+    function isValidScannedDoc(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 300 &&
+             data.status in ['INGESTED', 'REVIEW_REQUIRED', 'PROCESSED', 'REJECTED'] &&
+             data.uploadedBy is string && data.uploadedBy.size() <= 128 &&
+             data.uploadedAt is string && data.uploadedAt.size() <= 100 &&
+             (!('type' in data) || (data.type is string && data.type.size() <= 100)) &&
+             (!('summary' in data) || (data.summary is string && data.summary.size() <= 4000)) &&
+             (!('extractedText' in data) || (data.extractedText is string && data.extractedText.size() <= 20000)) &&
+             (!('tags' in data) || (data.tags is list && data.tags.size() <= 20));
+    }
+
+    match /scanned_docs/{docId} {
+      allow get: if isSignedIn() && isValidId(docId);
+      allow list: if isSignedIn();
+
+      allow create: if isSignedIn() && isValidId(docId) &&
+        isValidScannedDoc(incoming()) &&
+        incoming().uploadedBy == request.auth.uid;
+
+      allow update: if isSignedIn() && isValidId(docId) &&
+        isValidScannedDoc(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().uploadedBy == existing().uploadedBy &&
+        incoming().uploadedAt == existing().uploadedAt &&
+        (isAdmin() || existing().uploadedBy == request.auth.uid || incoming().diff(existing()).affectedKeys().hasOnly(['status', 'summary', 'tags']));
+
+      allow delete: if isAdmin() || (isSignedIn() && existing().uploadedBy == request.auth.uid);
+    }
+
+    // ----------------------------------------------------
+    // Knowledge Base (/knowledge/{knowledgeId})
+    // ----------------------------------------------------
+    function isValidKnowledgeItem(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 300 &&
+             data.category is string && data.category.size() <= 100 &&
+             data.content is string && data.content.size() <= 20000 &&
+             data.status in ['DRAFT', 'PUBLISHED', 'ARCHIVED', 'FLAGGED'] &&
+             data.authorId is string && data.authorId.size() <= 128 &&
+             data.createdAt is string && data.createdAt.size() <= 100 &&
+             (!('tags' in data) || (data.tags is list && data.tags.size() <= 20));
+    }
+
+    match /knowledge/{knowledgeId} {
+      allow get: if isSignedIn() && isValidId(knowledgeId);
+      allow list: if isSignedIn();
+
+      allow create: if isSignedIn() && isValidId(knowledgeId) &&
+        isValidKnowledgeItem(incoming()) &&
+        incoming().authorId == request.auth.uid;
+
+      allow update: if isSignedIn() && isValidId(knowledgeId) &&
+        isValidKnowledgeItem(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().authorId == existing().authorId &&
+        incoming().createdAt == existing().createdAt &&
+        (isAdmin() || existing().authorId == request.auth.uid);
+
+      allow delete: if isAdmin() || (isSignedIn() && existing().authorId == request.auth.uid);
+    }
+
+    // ----------------------------------------------------
+    // Security & Audit Logs (/audit_logs/{logId})
+    // Immutable Append-Only Log
+    // ----------------------------------------------------
+    function isValidAuditLog(data) {
+      return data.id is string && data.id.size() <= 128 &&
+             data.action is string && data.action.size() <= 300 &&
+             data.status in ['SUCCESS', 'REVIEW_REQUIRED', 'REJECTED', 'FAILED', 'DENIED'] &&
+             data.hash is string && data.hash.size() <= 128 &&
+             data.timestamp is string && data.timestamp.size() <= 100 &&
+             (!('capability' in data) || (data.capability is string && data.capability.size() <= 100)) &&
+             (!('details' in data) || (data.details is string && data.details.size() <= 8000)) &&
+             (!('userId' in data) || (data.userId is string && data.userId.size() <= 128)) &&
+             (!('userName' in data) || (data.userName is string && data.userName.size() <= 150)) &&
+             (!('agentId' in data) || (data.agentId is string && data.agentId.size() <= 128)) &&
+             (!('agentName' in data) || (data.agentName is string && data.agentName.size() <= 150));
+    }
+
+    match /audit_logs/{logId} {
+      allow get: if isSignedIn() && isValidId(logId);
+      allow list: if isSignedIn();
+
+      // Append-only write
+      allow create: if isSignedIn() && isValidId(logId) && isValidAuditLog(incoming());
+
+      // Modification or deletion is strictly forbidden to preserve cryptographic integrity
+      allow update, delete: if false;
+    }
+  }
+}

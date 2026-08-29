@@ -1,0 +1,11 @@
+{
+  "name": "GAG Visual Core OS",
+  "description": "GAG Core OS — Sistema Operacional de IA Multi-Agente para a GAG Visual com KIA Master Orchestrator, Integração 24/7 WhatsApp Business API, Estúdio Multimodal e Sinergia Operacional.",
+  "requestFramePermissions": [
+    "microphone",
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
