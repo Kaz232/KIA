@@ -5,6 +5,7 @@
  */
 
 import { HandoffPackage } from "./types";
+import type { ArtifactRecord } from "../artifacts/artifactTypes";
 
 export interface HandoffRequestParams {
   executionId: string;
@@ -16,7 +17,7 @@ export interface HandoffRequestParams {
   previousOutput?: string;
   qaFeedback?: string;
   attemptCount: number;
-  artifacts?: { name: string; type: string; content: string }[];
+  artifacts?: ArtifactRecord[];
   forceHumanEscalation?: boolean;
 }
 

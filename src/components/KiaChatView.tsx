@@ -447,8 +447,7 @@ export const KiaChatView: React.FC = () => {
     stopTtsAudio();
     setIsSpeakingLive(false);
     isSpeakingLiveRef.current = false;
-    wakeWordDetector.stop();
-    wakeWordDetector.setMutedForPlayback(false);
+    wakeWordDetector.pauseForActiveInput();
 
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
@@ -496,9 +495,7 @@ export const KiaChatView: React.FC = () => {
       // ignore
     }
 
-    if (systemSettingsRef.current.wakeWordEnabled) {
-      wakeWordDetector.start();
-    }
+    wakeWordDetector.resumeAfterActiveInput();
   };
 
   const toggleListening = () => {

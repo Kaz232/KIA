@@ -5,6 +5,7 @@
  */
 
 import { QAEvaluationReport, QACriteriaScore } from "./types";
+import type { ArtifactRecord } from "../artifacts/artifactTypes";
 
 export interface QAAssessmentInput {
   executionId: string;
@@ -12,7 +13,7 @@ export interface QAAssessmentInput {
   goal: string;
   agentId: string;
   deliverable: string;
-  artifacts?: { name: string; type: string; content: string }[];
+  artifacts?: ArtifactRecord[];
   expectedFormat?: string;
   passingScoreThreshold?: number; // default: 75
 }
@@ -110,7 +111,7 @@ export class QAEngine {
 
     // 5. Criterion: Integridade dos Artefatos Anexados (Weight 15%)
     const artifactsValid = input.artifacts && input.artifacts.length > 0
-      ? input.artifacts.every((a) => a.content && a.content.length > 10)
+      ? input.artifacts.every((a) => a.size > 0 && a.status !== "FAILED")
       : true;
     
     const artifactScore = artifactsValid ? 90 : 40;

@@ -11,6 +11,8 @@ import {
   ExecutionPipelineResult,
   OrchestratedStep,
 } from "./types";
+import type { ArtifactRecord } from "../artifacts/artifactTypes";
+import { artifactStore } from "../artifacts/artifactStore";
 import { auditEventManager } from "./auditEventManager";
 import { agentSupervisor } from "./agentSupervisor";
 import { qaEngine } from "./qaEngine";
@@ -50,18 +52,20 @@ export class ExecutionEngine {
   private async executeAgentInference(
     agentId: string,
     prompt: string,
-    contextInfo: Record<string, any>
-  ): Promise<{ text: string; artifacts: { name: string; type: string; content: string }[] }> {
+    contextInfo: Record<string, any>,
+    executionId?: string,
+    taskId?: string
+  ): Promise<{ text: string; artifacts: ArtifactRecord[] }> {
     const ai = this.getGenAI();
     const startTime = Date.now();
 
     if (ai) {
       try {
-        const candidateModels = ["gemini-2.5-flash", "gemini-3.1-flash-lite", "gemini-2.5-pro"];
+        const candidateModels = ["gemini-3.7-flash", "gemini-3.1-flash-lite"];
         for (const model of candidateModels) {
           try {
             const timeoutPromise = new Promise((_, reject) =>
-              setTimeout(() => reject(new Error("Timeout")), 4000)
+              setTimeout(() => reject(new Error("Timeout")), 15000)
             );
             const generatePromise = ai.models.generateContent({
               model,
@@ -70,22 +74,27 @@ Contexto: ${JSON.stringify(contextInfo)}
 Objetivo: ${prompt}
 Responda de forma rigorosa, executiva, em língua portuguesa, com tópicos acionáveis e sem placeholders.`,
               config: {
-                thinkingConfig: { thinkingBudget: 0 },
+                temperature: 0.3,
               },
             });
 
             const resp: any = await Promise.race([generatePromise, timeoutPromise]);
             const candidateText = resp.text || resp.candidates?.[0]?.content?.parts?.[0]?.text;
             if (candidateText && candidateText.trim().length > 0) {
+              const textContent = candidateText.trim();
+              const artifact = await artifactStore.create({
+                name: `entregavel_${agentId}_${Date.now()}.md`,
+                kind: "TEXT",
+                mimeType: "text/markdown",
+                data: textContent,
+                executionId,
+                taskId,
+                metadata: { agentId, model, generatedAt: new Date().toISOString() },
+              });
+
               return {
-                text: candidateText.trim(),
-                artifacts: [
-                  {
-                    name: `entregavel_${agentId}_${Date.now()}.md`,
-                    type: "markdown",
-                    content: candidateText.trim(),
-                  },
-                ],
+                text: textContent,
+                artifacts: [artifact],
               };
             }
           } catch (modelErr) {
@@ -114,15 +123,19 @@ Responda de forma rigorosa, executiva, em língua portuguesa, com tópicos acion
 2. Monitorar indicadores de impacto e KPIs associados ao entregável.
 3. Arquivar artefatos na Base de Conhecimento Corporativa.`;
 
+    const fallbackArtifact = await artifactStore.create({
+      name: `relatorio_${agentId}_${Date.now()}.md`,
+      kind: "TEXT",
+      mimeType: "text/markdown",
+      data: deliverableText,
+      executionId,
+      taskId,
+      metadata: { agentId, source: "deterministic_synthesizer", generatedAt: new Date().toISOString() },
+    });
+
     return {
       text: deliverableText,
-      artifacts: [
-        {
-          name: `relatorio_${agentId}_${Date.now()}.md`,
-          type: "markdown",
-          content: deliverableText,
-        },
-      ],
+      artifacts: [fallbackArtifact],
     };
   }
 
@@ -215,7 +228,7 @@ Responda de forma rigorosa, executiva, em língua portuguesa, com tópicos acion
 
     // 3. Task Orchestration: Decompose Goal into Steps
     let steps = taskOrchestrator.decomposeGoal(request.goal, primaryAgentId);
-    let allArtifacts: { name: string; type: string; content: string }[] = [];
+    let allArtifacts: ArtifactRecord[] = [];
     let accumulatedDeliverables: string[] = [];
     let totalRetriesUsed = 0;
     const handoffHistory: any[] = [];
@@ -229,7 +242,7 @@ Responda de forma rigorosa, executiva, em língua portuguesa, com tópicos acion
       const maxAttempts = request.maxRetries || 3;
       let stepPassed = false;
       let stepOutput = "";
-      let stepArtifacts: { name: string; type: string; content: string }[] = [];
+      let stepArtifacts: ArtifactRecord[] = [];
 
       step.state = "EXECUTING";
       auditEventManager.recordEvent({
@@ -254,7 +267,9 @@ Responda de forma rigorosa, executiva, em língua portuguesa, com tópicos acion
             title: step.title,
             inputs: request.inputs,
             previousContext: accumulatedDeliverables.slice(-2).join("\n"),
-          }
+          },
+          executionId,
+          step.stepId
         );
 
         stepOutput = inferenceResult.text;

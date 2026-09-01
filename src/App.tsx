@@ -16,6 +16,8 @@ import { AuditLogView } from "./components/AuditLogView";
 import { IncidentManagerView } from "./components/IncidentManagerView";
 import { SettingsView } from "./components/SettingsView";
 import { WhatsAppIntegrationView } from "./components/WhatsAppIntegrationView";
+import { MakeIntegrationView } from "./components/MakeIntegrationView";
+import { BrowserHarnessView } from "./components/BrowserHarnessView";
 import { MultimodalStudioView } from "./components/MultimodalStudioView";
 import { AuthGateway } from "./components/AuthGateway";
 import { SynergyWalkthroughModal } from "./components/SynergyWalkthroughModal";
@@ -65,6 +67,8 @@ const MainLayout: React.FC = () => {
           {activeTab === "incidents" && <IncidentManagerView />}
           {activeTab === "audit" && <AuditLogView />}
           {activeTab === "whatsapp" && <WhatsAppIntegrationView />}
+          {activeTab === "make" && <MakeIntegrationView />}
+          {activeTab === "browser" && <BrowserHarnessView />}
           {activeTab === "settings" && <SettingsView />}
         </main>
       </div>

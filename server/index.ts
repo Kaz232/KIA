@@ -4,6 +4,8 @@
  */
 import express, { Router, Express } from "express";
 import { n8nRouter } from "./routes/n8nRouter";
+import { makeRouter } from "./routes/makeRouter";
+import { browserRouter } from "./routes/browserRouter";
 import { engineRouter } from "./routes/engineRouter";
 import { registryRouter } from "./routes/registryRouter";
 import { requireAuth } from "./middleware/auth";
@@ -14,7 +16,9 @@ validateEnv();
 
 export const serverApiRouter = Router();
 
-// 2. Proteger e consolidar os routers dos 3 ecossistemas com o middleware de autenticação
+// 2. Proteger e consolidar os routers dos ecossistemas com o middleware de autenticação
+serverApiRouter.use("/make", makeRouter);
+serverApiRouter.use("/browser", browserRouter);
 serverApiRouter.use("/n8n", requireAuth, n8nRouter);
 serverApiRouter.use("/engine", requireAuth, engineRouter);
 serverApiRouter.use("/registry", requireAuth, registryRouter);
@@ -24,5 +28,5 @@ export const app: Express = express();
 app.use(express.json());
 app.use("/api", serverApiRouter);
 
-export { n8nRouter, engineRouter, registryRouter };
+export { n8nRouter, makeRouter, browserRouter, engineRouter, registryRouter };
 export default serverApiRouter;

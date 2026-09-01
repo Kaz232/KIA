@@ -18,6 +18,7 @@ import {
   Zap,
   Wand2,
   MessageSquare,
+  Globe,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { NavigationTab } from "../types";
@@ -60,6 +61,20 @@ export const Sidebar: React.FC = () => {
       icon: MessageSquare,
       highlight: true,
       badge: "24/7",
+    },
+    {
+      id: "make",
+      label: "Make.com (Zero-Key Hub)",
+      icon: Zap,
+      highlight: true,
+      badge: "ZERO-KEY",
+    },
+    {
+      id: "browser",
+      label: "Browser Harness",
+      icon: Globe,
+      highlight: true,
+      badge: "HARNESS",
     },
     {
       id: "tasks",

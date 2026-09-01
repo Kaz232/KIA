@@ -439,6 +439,8 @@ export type NavigationTab =
   | "dashboard"
   | "kia"
   | "whatsapp"
+  | "make"
+  | "browser"
   | "knowledge"
   | "scanner"
   | "tasks"

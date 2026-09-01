@@ -52,6 +52,7 @@ export const WhatsAppIntegrationView: React.FC = () => {
     createTask,
     currentUser,
     playSfx,
+    setActiveTab,
   } = useApp();
 
   const [activeSubTab, setActiveSubTab] = useState<"live_feed" | "qr_free" | "config" | "routing" | "simulator">("live_feed");
@@ -353,6 +354,14 @@ export const WhatsAppIntegrationView: React.FC = () => {
           >
             <Sliders className="w-3.5 h-3.5" />
             <span>Configuração Meta API</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab("make")}
+            className="px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 bg-gradient-to-r from-purple-600/30 to-indigo-600/30 text-purple-300 border border-purple-500/40 hover:from-purple-600/50 hover:to-indigo-600/50"
+          >
+            <Zap className="w-3.5 h-3.5 text-amber-400" />
+            <span>Make.com (Zero-Key Hub)</span>
           </button>
         </div>
 

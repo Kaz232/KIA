@@ -5,7 +5,7 @@ import dotenv from "dotenv";
 import crypto from "crypto";
 import { GoogleGenAI, Type } from "@google/genai";
 import { createServer as createViteServer } from "vite";
-import { n8nRouter, engineRouter, registryRouter } from "./server/index";
+import { n8nRouter, makeRouter, browserRouter, engineRouter, registryRouter } from "./server/index";
 
 dotenv.config();
 
@@ -15,7 +15,9 @@ const PORT = 3000;
 
 app.use(express.json({ limit: "25mb" }));
 
-// Mount Enterprise Integration Subsystems (N8N Automation Platform, Engine & Registries)
+// Mount Enterprise Integration Subsystems (Make.com Zero-Key Hub, Browser Harness, N8N Platform, Engine & Registries)
+app.use("/api/make", makeRouter);
+app.use("/api/browser", browserRouter);
 app.use("/api/n8n", n8nRouter);
 app.use("/api/engine", engineRouter);
 app.use("/api/registry", registryRouter);
@@ -76,9 +78,9 @@ async function generateWithFallback(
   let lastError: any = null;
   for (const model of uniqueModels) {
     try {
-      // 4000ms timeout per model attempt to guarantee responsiveness
+      // 15000ms timeout per model attempt to guarantee resilience
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`Timeout on model ${model}`)), 4000)
+        setTimeout(() => reject(new Error(`Timeout on model ${model}`)), 15000)
       );
 
       const generatePromise = ai.models.generateContent({
@@ -86,9 +88,6 @@ async function generateWithFallback(
         contents,
         config: {
           ...config,
-          thinkingConfig: {
-            thinkingBudget: 0,
-          },
         },
       });
 
@@ -289,20 +288,19 @@ Mensagem: ${message}`;
       try {
         usedModelName = model;
         
-        // Race stream initialization against a 3.5s timeout to guarantee instant response times
+        // Race stream initialization against a 12s timeout to guarantee high availability
         const streamInitPromise = ai.models.generateContentStream({
           model,
           contents: conversationContext,
           config: {
             systemInstruction,
             temperature: 0.2,
-            maxOutputTokens: 500,
-            thinkingConfig: { thinkingBudget: 0 },
+            maxOutputTokens: 2048,
           },
         });
 
         const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Timeout de 3500ms excedido para ${model}`)), 3500)
+          setTimeout(() => reject(new Error(`Timeout de 12000ms excedido para ${model}`)), 12000)
         );
 
         const responseStream = await Promise.race([streamInitPromise, timeoutPromise]);
@@ -622,7 +620,7 @@ Mensagem: ${message}`;
         systemInstruction,
         responseMimeType: "application/json",
         temperature: 0.2,
-        maxOutputTokens: 350,
+        maxOutputTokens: 2048,
       }
     );
 
@@ -729,8 +727,36 @@ let whatsappIncomingLogs: any[] = [
   }
 ];
 
-// Helper to send real message via Meta WhatsApp Cloud API if credentials are provided
+// Helper to send message via Make.com Webhook (Zero-API-Key) or Meta Cloud API
 async function dispatchMetaWhatsAppMessage(toPhone: string, textBody: string) {
+  // 1. Check if Make.com Zero-API-Key Webhook is configured (Priority 1)
+  const makeWebhook = (whatsappConfig as any).makeWebhookUrl || process.env.MAKE_WHATSAPP_WEBHOOK_URL;
+  if (makeWebhook && makeWebhook.startsWith("http")) {
+    try {
+      const cleanNumber = toPhone.replace(/[^0-9+]/g, "");
+      const res = await fetch(makeWebhook, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event: "whatsapp_send_outbound",
+          recipientNumber: cleanNumber,
+          message: textBody,
+          sender: "GAG Visual 24/7 Agent Hub",
+          timestamp: new Date().toISOString(),
+        }),
+      });
+      return {
+        dispatched: res.ok,
+        mode: "MAKE_COM_WEBHOOK",
+        status: res.status,
+        provider: "Make.com (Zero-API-Key Hub)",
+      };
+    } catch (err: any) {
+      console.warn("Make.com WhatsApp Webhook dispatch error:", err.message);
+    }
+  }
+
+  // 2. Direct Meta WhatsApp Cloud API (Priority 2)
   const token = whatsappConfig.accessToken || process.env.WHATSAPP_ACCESS_TOKEN;
   const phoneId = whatsappConfig.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID;
 
@@ -738,7 +764,7 @@ async function dispatchMetaWhatsAppMessage(toPhone: string, textBody: string) {
     return {
       dispatched: false,
       mode: "SIMULATED_LOCAL",
-      reason: "No active WHATSAPP_ACCESS_TOKEN or PHONE_NUMBER_ID provided; saved to live feed.",
+      reason: "Sem chave Meta ou URL Make.com configurada; mensagem registada no feed e simulador.",
     };
   }
 

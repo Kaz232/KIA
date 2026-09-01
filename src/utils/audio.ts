@@ -1,19 +1,39 @@
-// Audio helper utility for GAG Core UI feedback & Gemini TTS Playback
+// Audio helper utility for GAG Core OS & KIA Voice Engine (Zero-Latency Dual-Engine TTS & SFX)
 import { wakeWordDetector } from "./wakeWordDetector";
 
 let audioCtx: AudioContext | null = null;
 let currentTtsSource: AudioBufferSourceNode | null = null;
 let isCurrentlySpeaking = false;
+let chromeKeepAliveInterval: any = null;
 
+// Ensure AudioContext is unlocked by user interaction
 export function getAudioContext(): AudioContext {
-  if (!audioCtx) {
+  if (!audioCtx && typeof window !== "undefined") {
     const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-    audioCtx = new AudioContextClass();
+    if (AudioContextClass) {
+      audioCtx = new AudioContextClass();
+    }
   }
-  if (audioCtx.state === "suspended") {
-    audioCtx.resume();
+  if (audioCtx && audioCtx.state === "suspended") {
+    audioCtx.resume().catch(() => {});
   }
-  return audioCtx;
+  return audioCtx!;
+}
+
+// Global user gesture unlocker for browser autoplay policies
+if (typeof window !== "undefined") {
+  const unlockAudio = () => {
+    if (audioCtx && audioCtx.state === "suspended") {
+      audioCtx.resume().catch(() => {});
+    }
+    // Also unlock SpeechSynthesis in Chrome/Safari
+    if ("speechSynthesis" in window && window.speechSynthesis.paused) {
+      window.speechSynthesis.resume();
+    }
+  };
+  window.addEventListener("click", unlockAudio, { passive: true });
+  window.addEventListener("touchstart", unlockAudio, { passive: true });
+  window.addEventListener("keydown", unlockAudio, { passive: true });
 }
 
 export function playSfx(
@@ -33,6 +53,7 @@ export function playSfx(
 ) {
   try {
     const ctx = getAudioContext();
+    if (!ctx) return;
     const now = ctx.currentTime;
 
     if (type === "auto_send") {
@@ -98,75 +119,76 @@ export function playSfx(
       const osc1 = ctx.createOscillator();
       const osc2 = ctx.createOscillator();
       const gain = ctx.createGain();
-
       osc1.type = "sine";
       osc2.type = "sine";
-
       osc1.frequency.setValueAtTime(587.33, now); // D5
       osc1.frequency.exponentialRampToValueAtTime(880.0, now + 0.12); // A5
-
       osc2.frequency.setValueAtTime(880.0, now + 0.08); // A5
       osc2.frequency.exponentialRampToValueAtTime(1174.66, now + 0.22); // D6
-
-      gain.gain.setValueAtTime(0.001, now);
-      gain.gain.linearRampToValueAtTime(volume * 0.35, now + 0.04);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
-
+      gain.gain.setValueAtTime(volume * 0.3, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.26);
       osc1.connect(gain);
       osc2.connect(gain);
       gain.connect(ctx.destination);
-
       osc1.start(now);
       osc2.start(now + 0.08);
-      osc1.stop(now + 0.2);
-      osc2.stop(now + 0.35);
+      osc1.stop(now + 0.12);
+      osc2.stop(now + 0.26);
+    } else if (type === "success") {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(523.25, now); // C5
+      osc.frequency.exponentialRampToValueAtTime(783.99, now + 0.15); // G5
+      gain.gain.setValueAtTime(volume * 0.3, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.2);
+    } else if (type === "action" || type === "execute") {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(440, now); // A4
+      osc.frequency.linearRampToValueAtTime(659.25, now + 0.08); // E5
+      gain.gain.setValueAtTime(volume * 0.25, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.1);
     } else if (type === "click") {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = "sine";
-      osc.frequency.setValueAtTime(600, now);
-      osc.frequency.exponentialRampToValueAtTime(300, now + 0.04);
+      osc.frequency.setValueAtTime(800, now);
+      osc.frequency.exponentialRampToValueAtTime(400, now + 0.03);
       gain.gain.setValueAtTime(volume * 0.2, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
       osc.connect(gain);
       gain.connect(ctx.destination);
       osc.start(now);
       osc.stop(now + 0.04);
-    } else if (type === "success" || type === "execute") {
-      // Elegant gold chime chord
-      const freqs = [587.33, 739.99, 880.0, 1174.66]; // D5, F#5, A5, D6
-      freqs.forEach((freq, idx) => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(freq, now + idx * 0.05);
-        gain.gain.setValueAtTime(0.001, now + idx * 0.05);
-        gain.gain.linearRampToValueAtTime(volume * 0.2, now + idx * 0.05 + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + idx * 0.05 + 0.5);
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start(now + idx * 0.05);
-        osc.stop(now + idx * 0.05 + 0.5);
-      });
-    } else if (type === "notification" || type === "action") {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "sine";
-      osc.frequency.setValueAtTime(523.25, now);
-      osc.frequency.setValueAtTime(659.25, now + 0.08);
-      gain.gain.setValueAtTime(volume * 0.25, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(now);
-      osc.stop(now + 0.25);
     } else if (type === "warning") {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-      osc.type = "triangle";
-      osc.frequency.setValueAtTime(320, now);
-      osc.frequency.setValueAtTime(260, now + 0.1);
-      gain.gain.setValueAtTime(volume * 0.3, now);
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(300, now);
+      osc.frequency.linearRampToValueAtTime(200, now + 0.15);
+      gain.gain.setValueAtTime(volume * 0.2, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.2);
+    } else {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(659.25, now);
+      osc.frequency.exponentialRampToValueAtTime(880, now + 0.1);
+      gain.gain.setValueAtTime(volume * 0.25, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
       osc.connect(gain);
       gain.connect(ctx.destination);
@@ -180,6 +202,10 @@ export function playSfx(
 
 export function stopTtsAudio() {
   isCurrentlySpeaking = false;
+  if (chromeKeepAliveInterval) {
+    clearInterval(chromeKeepAliveInterval);
+    chromeKeepAliveInterval = null;
+  }
   try {
     wakeWordDetector.setMutedForPlayback(false);
   } catch {}
@@ -205,6 +231,7 @@ export function getIsSpeaking(): boolean {
 export async function playPcmAudio(base64Data: string, sampleRate = 24000): Promise<void> {
   stopTtsAudio();
   const ctx = getAudioContext();
+  if (!ctx) return;
 
   const binaryString = atob(base64Data);
   const len = binaryString.length;
@@ -252,12 +279,78 @@ export function sanitizeForVoice(text: string): string {
     .replace(/`([^`]+)`/g, "$1")
     .replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1")
     .replace(/[*#_~>]/g, "")
+    .replace(/\bAOA\b/g, "Kwanzas")
+    .replace(/\bKz\b/g, "Kwanzas")
     .replace(/\n+/g, " ")
     .replace(/\s{2,}/g, " ")
     .trim();
 }
 
-// Natural voice output with dual-engine fallback (Instant Browser SpeechSynthesis vs Gemini Neural Studio TTS)
+// Split text into natural conversational sentence chunks to bypass browser utterance limits
+function splitIntoSpokenChunks(text: string, maxChunkLength = 160): string[] {
+  const sentences = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [text];
+  const chunks: string[] = [];
+  let current = "";
+
+  for (const s of sentences) {
+    const trimmed = s.trim();
+    if (!trimmed) continue;
+    if ((current + " " + trimmed).trim().length <= maxChunkLength) {
+      current = (current + " " + trimmed).trim();
+    } else {
+      if (current) chunks.push(current);
+      if (trimmed.length > maxChunkLength) {
+        // Subdivide long clauses by commas
+        const subParts = trimmed.split(/,\s*/);
+        let subCurrent = "";
+        for (const sub of subParts) {
+          if ((subCurrent + ", " + sub).length <= maxChunkLength) {
+            subCurrent = subCurrent ? `${subCurrent}, ${sub}` : sub;
+          } else {
+            if (subCurrent) chunks.push(subCurrent);
+            subCurrent = sub;
+          }
+        }
+        if (subCurrent) current = subCurrent;
+        else current = "";
+      } else {
+        current = trimmed;
+      }
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks.filter((c) => c.trim().length > 0);
+}
+
+// Find best Portuguese voice available in browser
+function getBestPortugueseVoice(): SpeechSynthesisVoice | null {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) return null;
+  const voices = window.speechSynthesis.getVoices();
+  if (!voices || voices.length === 0) return null;
+
+  // 1. PT-PT (Portugal)
+  const ptPt = voices.find((v) => v.lang === "pt-PT" || v.lang === "pt_PT");
+  if (ptPt) return ptPt;
+
+  // 2. High-quality Portuguese named voices (Joana, Maria, Luciana, Raquel, Duarte)
+  const namedPt = voices.find((v) => {
+    const n = v.name.toLowerCase();
+    return (
+      (v.lang.startsWith("pt") || n.includes("portuguese")) &&
+      (n.includes("natural") || n.includes("google") || n.includes("joana") || n.includes("maria") || n.includes("luciana"))
+    );
+  });
+  if (namedPt) return namedPt;
+
+  // 3. Any Portuguese (PT-BR, etc.)
+  const anyPt = voices.find((v) => v.lang.startsWith("pt") || v.name.toLowerCase().includes("portuguese"));
+  if (anyPt) return anyPt;
+
+  // 4. Default native voice
+  return voices.find((v) => v.default) || voices[0] || null;
+}
+
+// Natural voice output with dual-engine fallback & sentence chunking
 export async function speakNaturalText(
   text: string,
   options: {
@@ -279,83 +372,98 @@ export async function speakNaturalText(
   isCurrentlySpeaking = true;
   onStart?.();
 
-  // Extract a readable portion (up to 480 chars) for responsive conversational feel
+  // Limit to reasonable conversational snippet (up to 450 chars) to prevent speech fatigue
   const voiceSnippet = clean.length > 500 ? clean.slice(0, 480) + "..." : clean;
+  const chunks = splitIntoSpokenChunks(voiceSnippet);
 
-  // 1. Instant Browser SpeechSynthesis (0ms latency, starts speaking immediately without network wait)
+  // 1. Instant Browser SpeechSynthesis with sequential chunk playback
   if (engine === "instant_browser" || engine === "auto") {
-    try {
-      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      try {
         window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(voiceSnippet);
-        utterance.lang = voiceName === "Aoede" || voiceName === "Fenrir" ? "pt-PT" : "pt-PT";
-        utterance.rate = 1.08;
-        utterance.pitch = 1.0;
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        }
 
-        const selectAndSpeak = () => {
-          const voices = window.speechSynthesis.getVoices();
-          const ptVoice = voices.find(
-            (v) =>
-              v.lang.startsWith("pt") ||
-              v.name.toLowerCase().includes("portuguese") ||
-              v.name.toLowerCase().includes("maria") ||
-              v.name.toLowerCase().includes("joana") ||
-              v.name.toLowerCase().includes("helena") ||
-              v.name.toLowerCase().includes("luciana")
-          );
-          if (ptVoice) {
-            utterance.voice = ptVoice;
+        wakeWordDetector.setMutedForPlayback(true);
+
+        // Keep-alive watchdog for Chrome SpeechSynthesis 14s bug
+        if (chromeKeepAliveInterval) clearInterval(chromeKeepAliveInterval);
+        chromeKeepAliveInterval = setInterval(() => {
+          if (isCurrentlySpeaking && typeof window !== "undefined" && "speechSynthesis" in window) {
+            window.speechSynthesis.pause();
+            window.speechSynthesis.resume();
+          }
+        }, 8000);
+
+        let chunkIndex = 0;
+
+        const speakNextChunk = () => {
+          if (!isCurrentlySpeaking || chunkIndex >= chunks.length) {
+            stopTtsAudio();
+            onEnd?.();
+            return;
           }
 
-          utterance.onstart = () => {
-            try {
-              wakeWordDetector.setMutedForPlayback(true);
-            } catch {}
-          };
+          const currentText = chunks[chunkIndex];
+          chunkIndex++;
+
+          const utterance = new SpeechSynthesisUtterance(currentText);
+          utterance.lang = "pt-PT";
+          utterance.rate = 1.08;
+          utterance.pitch = 1.0;
+
+          const voice = getBestPortugueseVoice();
+          if (voice) {
+            utterance.voice = voice;
+          }
+
           utterance.onend = () => {
-            isCurrentlySpeaking = false;
-            try {
-              wakeWordDetector.setMutedForPlayback(false);
-            } catch {}
-            onEnd?.();
+            if (chunkIndex < chunks.length && isCurrentlySpeaking) {
+              setTimeout(speakNextChunk, 30);
+            } else {
+              stopTtsAudio();
+              onEnd?.();
+            }
           };
+
           utterance.onerror = (e) => {
-            isCurrentlySpeaking = false;
-            try {
-              wakeWordDetector.setMutedForPlayback(false);
-            } catch {}
-            onError?.(e);
-            onEnd?.();
+            console.debug("Speech synthesis chunk event:", e);
+            if (chunkIndex < chunks.length && isCurrentlySpeaking) {
+              speakNextChunk();
+            } else {
+              stopTtsAudio();
+              onEnd?.();
+            }
           };
 
           window.speechSynthesis.speak(utterance);
         };
 
         if (window.speechSynthesis.getVoices().length > 0) {
-          selectAndSpeak();
+          speakNextChunk();
           return;
         } else {
           window.speechSynthesis.onvoiceschanged = () => {
-            selectAndSpeak();
+            speakNextChunk();
           };
-          // In case voiceschanged doesn't trigger immediately:
           setTimeout(() => {
             if (isCurrentlySpeaking && !window.speechSynthesis.speaking) {
-              selectAndSpeak();
+              speakNextChunk();
             }
-          }, 50);
+          }, 60);
           return;
         }
+      } catch (err) {
+        console.warn("Browser SpeechSynthesis error, attempting fallback:", err);
       }
-    } catch (err) {
-      console.warn("Browser SpeechSynthesis fallback triggered:", err);
     }
   }
 
-  // 2. Gemini Neural Studio TTS endpoint (High-fidelity 24kHz audio)
+  // 2. Gemini Neural Studio TTS endpoint fallback (24kHz audio)
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4000);
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
 
     const res = await fetch("/api/tts", {
       method: "POST",
@@ -378,45 +486,10 @@ export async function speakNaturalText(
       }
     }
   } catch (err) {
-    console.warn("Gemini Studio TTS unavailable, falling back to instant browser speech:", err);
+    console.warn("Gemini Studio TTS failed:", err);
   }
 
-  // 3. Ultimate Fallback to Browser SpeechSynthesis
-  try {
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(voiceSnippet);
-      utterance.lang = "pt-PT";
-      utterance.rate = 1.05;
-      utterance.onstart = () => {
-        try {
-          wakeWordDetector.setMutedForPlayback(true);
-        } catch {}
-      };
-      utterance.onend = () => {
-        isCurrentlySpeaking = false;
-        try {
-          wakeWordDetector.setMutedForPlayback(false);
-        } catch {}
-        onEnd?.();
-      };
-      utterance.onerror = (e) => {
-        isCurrentlySpeaking = false;
-        try {
-          wakeWordDetector.setMutedForPlayback(false);
-        } catch {}
-        onError?.(e);
-        onEnd?.();
-      };
-      window.speechSynthesis.speak(utterance);
-      return;
-    }
-  } catch (err) {
-    console.error("All voice engines failed:", err);
-    onError?.(err);
-  }
-
-  isCurrentlySpeaking = false;
+  // 3. Final safety resolve
+  stopTtsAudio();
   onEnd?.();
 }
-

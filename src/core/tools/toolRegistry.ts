@@ -1,5 +1,6 @@
 import { CoreTool, ToolExecutionContext, ToolResult } from "../types";
 import { N8NToolAdapter } from "./n8n/N8NToolAdapter";
+import { browserToolAdapter } from "./browser/BrowserToolAdapter";
 
 export class ToolRegistry {
   private static instance: ToolRegistry;
@@ -11,6 +12,11 @@ export class ToolRegistry {
       N8NToolAdapter.getInstance().registerAllN8NToolsIntoRegistry();
     } catch (e) {
       console.warn("N8N tool registration deferred:", e);
+    }
+    try {
+      browserToolAdapter.registerAllTools(this);
+    } catch (e) {
+      console.warn("Browser harness tool registration deferred:", e);
     }
   }
 
