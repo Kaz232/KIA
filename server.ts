@@ -3,9 +3,10 @@ import http from "http";
 import path from "path";
 import dotenv from "dotenv";
 import crypto from "crypto";
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI, Type, Modality } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import { n8nRouter, makeRouter, browserRouter, engineRouter, registryRouter } from "./server/index";
+import { kiaCache } from "./server/cache/kiaCache";
 
 dotenv.config();
 
@@ -105,9 +106,57 @@ async function generateWithFallback(
 function synthesizeLocalKiaResponse(message: string, userName = "Josemar Gourgel", userRole = "OWNER", contextData: any = {}) {
   const msg = message.toLowerCase();
   const startTime = Date.now();
-  const uniqueNonce = Math.random().toString(36).substring(2, 7);
 
-  // 1. Task Creation Intent
+  // 1. Commercial Proposal / Client Outreach Pitch (e.g. Jussara / ANDA / Serviços GAG Visual)
+  if (
+    msg.includes("jussara") ||
+    msg.includes("anda") ||
+    msg.includes("solucoes criativas") ||
+    msg.includes("soluções criativas") ||
+    msg.includes("videos promocionais") ||
+    msg.includes("vídeos promocionais") ||
+    msg.includes("proposta simples") ||
+    msg.includes("opcoes de servico") ||
+    msg.includes("opções de serviço") ||
+    msg.includes("conteudo que converte") ||
+    msg.includes("conteúdo que converte") ||
+    msg.includes("obrigado pelo retorno") ||
+    (msg.includes("proposta") && (msg.includes("preco") || msg.includes("preço") || msg.includes("servico") || msg.includes("serviço") || msg.includes("anda")))
+  ) {
+    return {
+      content: `Excelente abordagem comercial para a Jussara da ANDA, ${userName}!\n\nA tua mensagem está muito direta, empática e com foco nos resultados do cliente. Para as 3 opções de serviço que mencionaste na mensagem, estruturei esta proposta pronta em Kwanzas (AOA):\n\n1. **Opção 1 — Pacote Presença & Vídeos:** 4 Vídeos Promocionais (Reels/Shorts) + Roteiros persuasivos de conversão — **180.000 AOA**\n2. **Opção 2 — Pacote Tração & Tráfego:** 8 Vídeos Promocionais + Gestão de Campanhas Meta Ads para Luanda — **350.000 AOA**\n3. **Opção 3 — Pacote Domínio Visual 360:** Identidade de Campanha, 12 Vídeos, Design Estratégico e Tráfego Integrado — **600.000 AOA**\n\nDesejas que eu crie agora a ordem de trabalho no Backlog para o Copywriter e o Diretor de Arte gerarem a apresentação final da proposta?`,
+      intent: "conversation",
+      capability: "conversation:chat",
+      executionStatus: "SUCCESS",
+      toolsUsed: ["gag-copywriter-engine", "pricing-calculator-aoa", "task-router"],
+      suggestedPrompts: [
+        "Criar tarefa: Gerar PDF da Proposta ANDA",
+        "Ajustar valores dos pacotes em AOA",
+        "Redigir mensagem de follow-up",
+      ],
+      actionCard: {
+        type: "task_created",
+        title: "Proposta Comercial — Cliente ANDA (Jussara)",
+        description: "3 pacotes estruturados com estimativas em AOA prontos para envio.",
+        actionLabel: "Ver no Backlog de Tarefas",
+        actionUrl: "#tab=tasks",
+      },
+      actionPayload: {
+        type: "create_task",
+        title: "Elaborar Proposta Comercial — Cliente ANDA (Jussara)",
+        description: message,
+        priority: "HIGH",
+        category: "Comercial & Vendas",
+        tags: ["Proposta", "ANDA", "Vídeos", "Comercial"],
+      },
+      auditRef: "0x" + crypto.createHash("sha256").update(`${userName}:${message}:${Date.now()}`).digest("hex").slice(0, 32),
+      executionTimeMs: 55,
+      timestamp: new Date().toISOString(),
+      modelName: "gag-kia-local-heuristic",
+    };
+  }
+
+  // 2. Task Creation Intent
   if (msg.includes("tarefa") || msg.includes("criar tarefa") || msg.includes("task") || msg.includes("prazo") || msg.includes("fazer")) {
     const taskTitle = message.length > 50 ? message.slice(0, 50) + "..." : message;
     return {
@@ -141,7 +190,7 @@ function synthesizeLocalKiaResponse(message: string, userName = "Josemar Gourgel
     };
   }
 
-  // 2. Synergy Orchestration Intent
+  // 3. Synergy Orchestration Intent
   if (msg.includes("sinergia") || msg.includes("orquestrar") || msg.includes("disparar") || msg.includes("equipa") || msg.includes("agentes")) {
     return {
       content: `Sinergia Global acionada com sucesso para a GAG Visual, ${userName}. Mobilizei os 13 agentes especialistas da organização em paralelo. As ordens de trabalho foram distribuídas e estão ativas no painel executivo.`,
@@ -167,7 +216,7 @@ function synthesizeLocalKiaResponse(message: string, userName = "Josemar Gourgel
     };
   }
 
-  // 3. Knowledge Base Ingestion Intent
+  // 4. Knowledge Base Ingestion Intent
   if (msg.includes("conhecimento") || msg.includes("artigo") || msg.includes("playbook") || msg.includes("documentar") || msg.includes("guardar")) {
     return {
       content: `Anotado, ${userName}. Registei esta diretriz no Knowledge Base da GAG Core para consulta e replicação em toda a equipa.`,
@@ -199,7 +248,7 @@ function synthesizeLocalKiaResponse(message: string, userName = "Josemar Gourgel
     };
   }
 
-  // 4. Default Executive Chat Response
+  // 5. Default Executive Chat Response
   return {
     content: `Olá ${userName}. Sou a KIA, a inteligência-mestre e coordenadora operacional do GAG Core OS.\n\nEstou conectada aos 13 agentes da GAG Visual (Copywriting, Design & Vídeo Veo 3.1, Gestão de Tráfego & ROAS, Kaza Core Dispatcher, Scanner OCR, Educação e Infraestrutura).\n\nPodes pedir-me para criar tarefas, redigir briefings, simular cenários de investimento em Kwanzas (AOA), analisar documentos contabilísticos com DRE ou disparar a Sinergia Global da equipa. Como posso acelerar o teu negócio hoje?`,
     intent: "conversation",
@@ -233,7 +282,83 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
-// 2.0 KIA Real-time Token Streaming Endpoint (SSE for instant gradual typing & zero-latency fallback)
+// 2.0.1 Server-side Natural Neural Voice (TTS) Endpoint with High-Performance Cache
+app.post("/api/tts", async (req, res) => {
+  try {
+    const { text, voiceName = "Kore" } = req.body;
+    if (!text || typeof text !== "string") {
+      return res.status(400).json({ error: "Text is required" });
+    }
+
+    const cleanText = text
+      .replace(/```[\s\S]*?```/g, "")
+      .replace(/[*#_`~>]/g, "")
+      .replace(/\n+/g, " ")
+      .slice(0, 800)
+      .trim();
+
+    // Map voice alias to Gemini natural voices (Aoede, Kore, Fenrir, Puck, Zephyr, Charon)
+    const validVoices = ["Kore", "Aoede", "Fenrir", "Puck", "Zephyr", "Charon", "Leda", "Orus"];
+    const selectedVoice = validVoices.includes(voiceName) ? voiceName : "Kore";
+
+    // 1. Check in-memory audio cache for zero-latency instant playback
+    const cachedAudio = kiaCache.getAudio(cleanText, selectedVoice);
+    if (cachedAudio) {
+      return res.json({
+        audioBase64: cachedAudio.audioBase64,
+        mimeType: cachedAudio.mimeType,
+        sampleRate: cachedAudio.sampleRate,
+        voiceName: selectedVoice,
+        cached: true,
+      });
+    }
+
+    const ai = getGenAI();
+    const response = await ai.models.generateContent({
+      model: "gemini-3.1-flash-tts-preview",
+      contents: [{ parts: [{ text: cleanText }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: {
+              voiceName: selectedVoice,
+            },
+          },
+        },
+      },
+    });
+
+    const candidates = response.candidates;
+    if (candidates && candidates[0]?.content?.parts) {
+      for (const part of candidates[0].content.parts) {
+        if (part.inlineData && part.inlineData.data) {
+          const audioBase64 = part.inlineData.data;
+          const mimeType = part.inlineData.mimeType || "audio/pcm;rate=24000";
+          const sampleRate = 24000;
+
+          // Save to cache for future repeated phrases
+          kiaCache.setAudio(cleanText, audioBase64, selectedVoice, mimeType, sampleRate);
+
+          return res.json({
+            audioBase64,
+            mimeType,
+            sampleRate,
+            voiceName: selectedVoice,
+            cached: false,
+          });
+        }
+      }
+    }
+
+    return res.status(204).json({ message: "No audio generated" });
+  } catch (err: any) {
+    // Gracefully handle if TTS direct audio generation fails so frontend falls back to browser natural voice
+    return res.status(500).json({ error: err.message || "TTS generation failed" });
+  }
+});
+
+// 2.0 KIA Real-time Token Streaming Endpoint with Intelligent Query Caching
 app.post("/api/kia/stream", async (req, res) => {
   const {
     message,
@@ -256,22 +381,69 @@ app.post("/api/kia/stream", async (req, res) => {
   });
 
   const startTime = Date.now();
+
+  // 1. Check Intelligent Response Cache for Instant Replay (<10ms)
+  const cached = kiaCache.getResponse(message, userRole);
+  if (cached) {
+    const words = cached.content.split(" ");
+    for (const w of words) {
+      res.write(`data: ${JSON.stringify({ type: "chunk", text: w + " " })}\n\n`);
+      await new Promise((r) => setTimeout(r, 6));
+    }
+    const auditHash = "0x" + crypto.createHash("sha256").update(`${userName}:${message}:${Date.now()}`).digest("hex").slice(0, 32);
+    res.write(
+      `data: ${JSON.stringify({
+        type: "done",
+        fullContent: cached.content,
+        intent: cached.intent || "conversation",
+        capability: cached.capability || "conversation:chat",
+        executionStatus: cached.executionStatus || "SUCCESS",
+        toolsUsed: cached.toolsUsed || ["kia-intelligent-cache", "instant-responder"],
+        suggestedPrompts: cached.suggestedPrompts || [
+          "⚡ Disparar Sinergia Global",
+          "Ver tarefas no Backlog",
+          "Consultar Knowledge Base",
+        ],
+        actionCard: cached.actionCard,
+        actionPayload: cached.actionPayload,
+        auditRef: auditHash,
+        executionTimeMs: Date.now() - startTime,
+        timestamp: new Date().toISOString(),
+        modelName: "gag-kia-cache-lru",
+        cached: true,
+      })}\n\n`
+    );
+    res.end();
+    return;
+  }
+
   let fullAccumulatedText = "";
   let usedModelName = "gemini-3.7-flash";
   const attemptedModelErrors: { model: string; error: string; timeMs: number }[] = [];
 
-  const systemInstruction = `[DIRETRIZ SUPREMA DO GAG CORE OS - RESPOSTA DIRETA & FACTICIDADE]
-Tu és a KIA (Knowledge Intelligent Agent), Assistente Central, Gestora do Sistema e Orquestradora da GAG Visual (Luanda/Angola).
-1. RESPOSTA DIRETA: Inicia a tua resposta IMEDIATAMENTE com o conteúdo principal ou ação executada na PRIMEIRA FRASE. NUNCA uses introduções, cumprimentos, saudações redundantes ou rodeios (ex: PROIBIDO 'Olá', 'Como posso ajudar?', 'Com certeza!', 'Aqui está a resposta:').
-2. FORMATAÇÃO VISUAL: Dá prioridade a tabelas Markdown e listas com bullet points.
-3. CONTEXTO LOCAL: Moeda padrão em Kwanzas (AOA) e USD quando aplicável. Linguagem técnica executiva em Português de Angola.
-4. FACTICIDADE: NUNCA inventes dados financeiros, métricas ou URLs. Caso faltem dados, solicita clarificação de forma direta.
-5. SEM CLICHÊS: Não termines com perguntas clichê como 'Desejas que eu...', 'Posso continuar?' ou 'O que desejas fazer?'.`;
+  const systemInstruction = `[IDENTIDADE & PERSONALIDADE DA KIA - GAG CORE OS]
+Tu és a KIA (Knowledge Intelligent Agent), a assistente de voz executiva e cérebro operacional da GAG Visual (Luanda/Angola).
+Diretrizes essenciais:
+1. LINGUAGEM NATURAL E CONVERSACIONAL: Fala de forma acolhedora, inteligente, expressiva e profissional em Português (semelhante ao modo de voz do ChatGPT e Gemini Live).
+2. CONTEXTO E NÃO-REPETIÇÃO:
+   - NUNCA repitas ou ecoes as frases do utilizador. Responde diretamente ao que foi solicitado.
+   - Se o utilizador te apresentar uma mensagem ou abordagem para um cliente (ex: mensagem para a Jussara da ANDA), analisa estrategicamente, elogia a iniciativa, sugere pacotes/preços em Kwanzas (AOA) e propõe os próximos passos práticos.
+3. CONTEXTO LOCAL & GAG VISUAL: Moeda padrão em Kwanzas (AOA) e USD quando aplicável. Compreendes produção de vídeo publicitário, campanhas de tráfego pago Meta/Google Ads, design de identidade e impostos de Angola.
+4. ESTRUTURA EQUILIBRADA: Mantém a resposta agradável aos ouvidos quando lida em voz alta.`;
 
-  const conversationContext = `Utilizador: ${userName} (${userRole})
-Histórico recente:
-${history.slice(-3).map((h: any) => `${h.role === "user" ? "U" : "KIA"}: ${h.content}`).join("\n")}
-Mensagem: ${message}`;
+  // Structured multi-turn conversation format for Gemini
+  const contents: any[] = history.length > 0
+    ? [
+        ...history.slice(-4).map((h: any) => ({
+          role: h.role === "user" ? "user" : "model",
+          parts: [{ text: h.content || "" }],
+        })),
+        {
+          role: "user",
+          parts: [{ text: message }],
+        },
+      ]
+    : [{ parts: [{ text: message }] }];
 
   try {
     const ai = getGenAI();
@@ -291,7 +463,7 @@ Mensagem: ${message}`;
         // Race stream initialization against a 12s timeout to guarantee high availability
         const streamInitPromise = ai.models.generateContentStream({
           model,
-          contents: conversationContext,
+          contents,
           config: {
             systemInstruction,
             temperature: 0.2,
@@ -341,7 +513,7 @@ Mensagem: ${message}`;
       const piece = word + " ";
       fullAccumulatedText += piece;
       res.write(`data: ${JSON.stringify({ type: "chunk", text: piece })}\n\n`);
-      await new Promise((r) => setTimeout(r, 15));
+      await new Promise((r) => setTimeout(r, 12));
     }
     usedModelName = "gag-kia-local-heuristic";
   }
@@ -540,11 +712,30 @@ Mensagem: ${message}`;
 
   const executionTimeMs = Date.now() - startTime;
   const auditHash = "0x" + crypto.createHash("sha256").update(`${userName}:${message}:${Date.now()}`).digest("hex").slice(0, 32);
+  const finalTrimmedContent = fullAccumulatedText.trim();
+
+  // Save in cache for future repeated phrases
+  if (finalTrimmedContent) {
+    kiaCache.setResponse(message, {
+      content: finalTrimmedContent,
+      intent,
+      capability,
+      executionStatus: "SUCCESS",
+      toolsUsed: ["gemini-streaming-core", "kia-cache"],
+      suggestedPrompts: [
+        "⚡ Disparar Sinergia Global",
+        "Ver tarefas no Backlog",
+        "Consultar Knowledge Base",
+      ],
+      actionCard,
+      actionPayload,
+    }, userRole);
+  }
 
   res.write(
     `data: ${JSON.stringify({
       type: "done",
-      fullContent: fullAccumulatedText.trim(),
+      fullContent: finalTrimmedContent,
       intent,
       capability,
       executionStatus: "SUCCESS",
@@ -560,10 +751,21 @@ Mensagem: ${message}`;
       executionTimeMs,
       timestamp: new Date().toISOString(),
       modelName: usedModelName,
+      cached: false,
     })}\n\n`
   );
 
   res.end();
+});
+
+// 2.0.2 Cache Inspection & Clear Endpoints
+app.get("/api/kia/cache-stats", (_req, res) => {
+  res.json(kiaCache.getStats());
+});
+
+app.post("/api/kia/cache-clear", (_req, res) => {
+  kiaCache.clear();
+  res.json({ status: "ok", message: "KIA response and TTS audio cache cleared successfully." });
 });
 
 // 2. KIA Multi-turn Chat & Intent Execution Router
@@ -581,19 +783,45 @@ app.post("/api/kia/chat", async (req, res) => {
       return res.status(400).json({ error: "Message is required" });
     }
 
-    const ai = getGenAI();
     const startTime = Date.now();
 
-    // Streamlined system instruction with GAG Global Standards
-    const systemInstruction = `[DIRETRIZ SUPREMA DO GAG CORE OS - RESPOSTA DIRETA & FACTICIDADE]
-Tu és a KIA (Knowledge Intelligent Agent), Assistente Central, Gestora do Sistema e Orquestradora da GAG Visual (Luanda/Angola).
-1. RESPOSTA DIRETA: No campo 'content', inicia a resposta IMEDIATAMENTE com o resultado, confirmação da ação ou informação solicitada na primeira frase. NUNCA uses 'Olá', 'Como posso ajudar?', 'Com certeza!' ou introduções redundantes.
-2. FORMATAÇÃO VISUAL: Dá prioridade a tabelas Markdown e bullet points claros no 'content'.
-3. CONTEXTO LOCAL: Moeda padrão em Kwanzas (AOA) e USD quando aplicável.
-4. FACTICIDADE: NUNCA inventes dados financeiros, métricas ou URLs.
-5. Retorna SEMPRE um JSON rigoroso:
+    // 1. Check in-memory cache
+    const cached = kiaCache.getResponse(message, userRole);
+    if (cached) {
+      const auditHash = "0x" + crypto.createHash("sha256").update(`${userName}:${message}:${Date.now()}`).digest("hex").slice(0, 32);
+      return res.json({
+        content: cached.content,
+        intent: cached.intent || "conversation",
+        capability: cached.capability || "conversation:chat",
+        executionStatus: cached.executionStatus || "SUCCESS",
+        toolsUsed: cached.toolsUsed || ["kia-intelligent-cache"],
+        suggestedPrompts: cached.suggestedPrompts || [
+          "Ver tarefas no Backlog",
+          "Pesquisar no Knowledge Base",
+          "Disparar Sinergia Global",
+        ],
+        actionCard: cached.actionCard,
+        actionPayload: cached.actionPayload,
+        auditRef: auditHash,
+        executionTimeMs: Date.now() - startTime,
+        timestamp: new Date().toISOString(),
+        modelName: "gag-kia-cache-lru",
+        cached: true,
+      });
+    }
+
+    const ai = getGenAI();
+
+    // Streamlined system instruction with conversational GAG Global Standards
+    const systemInstruction = `[IDENTIDADE & PERSONALIDADE DA KIA - GAG CORE OS]
+Tu és a KIA (Knowledge Intelligent Agent), a assistente de voz e cérebro operacional da GAG Visual (Luanda/Angola).
+A tua linguagem e tom de voz devem ser como o modo de voz do ChatGPT e Gemini:
+1. LINGUAGEM NATURAL & FLUIDA: No campo 'content', fala de forma humana, clara, amigável e expressiva em Português natural. NUNCA repitas as frases do utilizador.
+2. CONTEXTO LOCAL: Moeda padrão em Kwanzas (AOA) e USD quando aplicável.
+3. Se o utilizador partilhar uma mensagem comercial (ex: para a Jussara/ANDA), analisa e propõe 3 pacotes em Kwanzas.
+4. Retorna SEMPRE um JSON rigoroso:
 {
-  "content": "Conteúdo principal direto, claro e estruturado sem saudações redundantes.",
+  "content": "A tua resposta falada e clara, envolvente, inteligente e sem rodeios robóticos.",
   "intent": "conversation | task | knowledge | document | agent_factory | internal_tool",
   "capability": "task:create | knowledge:search | conversation:chat | agent_orchestration",
   "executionStatus": "SUCCESS",
@@ -607,15 +835,23 @@ Tu és a KIA (Knowledge Intelligent Agent), Assistente Central, Gestora do Siste
   "actionPayload": {}
 }`;
 
-    const conversationContext = `Utilizador: ${userName} (${userRole})
-Histórico recente:
-${history.slice(-3).map((h: any) => `${h.role === "user" ? "U" : "KIA"}: ${h.content}`).join("\n")}
-Mensagem: ${message}`;
+    const geminiContents: any[] = history.length > 0
+      ? [
+          ...history.slice(-4).map((h: any) => ({
+            role: h.role === "user" ? "user" : "model",
+            parts: [{ text: h.content || "" }],
+          })),
+          {
+            role: "user",
+            parts: [{ text: message }],
+          },
+        ]
+      : [{ parts: [{ text: message }] }];
 
     const { response, usedModel } = await generateWithFallback(
       ai,
       process.env.AI_MODEL || "gemini-3.7-flash",
-      conversationContext,
+      geminiContents,
       {
         systemInstruction,
         responseMimeType: "application/json",

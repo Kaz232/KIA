@@ -23,7 +23,7 @@ import {
 import { useApp } from "../context/AppContext";
 import { KiaTamagotchiCompanion } from "./KiaTamagotchiCompanion";
 import { wakeWordDetector } from "../utils/wakeWordDetector";
-import { stopTtsAudio, playSfx, getIsSpeaking } from "../utils/audio";
+import { stopTtsAudio, playSfx, getIsSpeaking, speakNaturalText } from "../utils/audio";
 import { ChatAttachment } from "../types";
 
 export const KiaChatView: React.FC = () => {
@@ -53,6 +53,7 @@ export const KiaChatView: React.FC = () => {
   const [ttsMuted, setTtsMuted] = useState(() => !systemSettings.autoAudioTts);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -158,6 +159,25 @@ export const KiaChatView: React.FC = () => {
     updateSettings({ autoAudioTts: !nextMuted });
     if (nextMuted) {
       stopTtsAudio();
+      setSpeakingMsgId(null);
+    }
+  };
+
+  const handleToggleSpeakMessage = (msgId: string, content: string) => {
+    if (speakingMsgId === msgId && getIsSpeaking()) {
+      stopTtsAudio();
+      setSpeakingMsgId(null);
+    } else {
+      stopTtsAudio();
+      setSpeakingMsgId(msgId);
+      playSfx("click", 0.3);
+      speakNaturalText(content, {
+        voiceName: systemSettings.voiceName || "Kore",
+        engine: "auto",
+        onStart: () => setSpeakingMsgId(msgId),
+        onEnd: () => setSpeakingMsgId(null),
+        onError: () => setSpeakingMsgId(null),
+      });
     }
   };
 
@@ -661,18 +681,37 @@ export const KiaChatView: React.FC = () => {
                       : "bg-slate-900/90 border border-slate-800 text-slate-100 rounded-bl-none"
                   }`}
                 >
-                  {/* Copy Button */}
-                  <button
-                    onClick={() => copyToClipboard(msg.content, msg.id)}
-                    className="absolute top-2 right-2 p-1 rounded-md bg-black/40 text-slate-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                    title="Copiar texto"
-                  >
-                    {copiedId === msg.id ? (
-                      <Check className="w-3.5 h-3.5 text-emerald-400" />
-                    ) : (
-                      <Copy className="w-3.5 h-3.5" />
+                  {/* Message Action Controls (Copy & Audible TTS Playback) */}
+                  <div className="absolute top-2 right-2 flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {!isUser && (
+                      <button
+                        onClick={() => handleToggleSpeakMessage(msg.id, msg.content)}
+                        className={`p-1 rounded-md transition-all ${
+                          speakingMsgId === msg.id
+                            ? "bg-amber-500/30 text-amber-300 !opacity-100 ring-1 ring-amber-400/50"
+                            : "bg-black/40 text-slate-400 hover:text-white"
+                        }`}
+                        title={speakingMsgId === msg.id ? "Parar leitura por voz" : "Ouvir resposta audível (TTS Natural)"}
+                      >
+                        {speakingMsgId === msg.id ? (
+                          <VolumeX className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
+                        ) : (
+                          <Volume2 className="w-3.5 h-3.5" />
+                        )}
+                      </button>
                     )}
-                  </button>
+                    <button
+                      onClick={() => copyToClipboard(msg.content, msg.id)}
+                      className="p-1 rounded-md bg-black/40 text-slate-400 hover:text-white transition-all"
+                      title="Copiar texto"
+                    >
+                      {copiedId === msg.id ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
 
                   <p className="whitespace-pre-wrap break-words">{msg.content}</p>
 

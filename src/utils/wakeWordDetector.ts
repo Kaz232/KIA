@@ -18,10 +18,10 @@ export interface WakeWordEvent {
 export type WakeWordCallback = (event: WakeWordEvent) => void;
 export type WakeWordStatusCallback = (status: "listening" | "inactive" | "triggered" | "permission_blocked" | "unsupported") => void;
 
-// Wake word trigger regex patterns with phonetic variants in Portuguese
+// Wake word trigger regex patterns with phonetic variants in Portuguese (PT-PT, PT-AO, PT-BR)
 const WAKE_WORD_PATTERNS = [
-  /\b(ei|hey|ola|olá|ok|ouça|ouca|escuta|alô|alo|fala|falar com a)?\s*(kia|quia|kya|kea|k-i-a|qui a)\b/i,
-  /\b(kia|quia|kya)\b/i,
+  /\b(ei|hey|ola|olá|ok|ouça|ouca|escuta|alô|alo|fala|falar com a|chamar|chama a|acorda|acordar|oi)?\s*(kia|quia|kya|kea|k-i-a|qui a|ki a|tia|guia)\b/i,
+  /\b(kia|quia|kya|kea)\b/i,
 ];
 
 // Helper to check if text contains a wake word

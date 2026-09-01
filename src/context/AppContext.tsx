@@ -34,6 +34,7 @@ import {
 } from "../data/initialData";
 import { playSfx, speakNaturalText } from "../utils/audio";
 import { messageQueue } from "../utils/messageQueue";
+import { kiaClientCache } from "../utils/kiaClientCache";
 import {
   getSupabaseConfig,
   saveSupabaseConfig,
@@ -967,97 +968,124 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         let accumulatedContent = "";
         let doneData: any = null;
 
-        try {
-          const response = await fetch("/api/kia/stream", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              message: text,
-              history: chatMessages.slice(-6).map((m) => ({
-                role: m.role,
-                content: m.content,
-              })),
-              userRole: activeRole,
-              userName: currentUser.name,
-              contextData: {
-                tasksCount: tasks.length,
-                knowledgeCount: knowledge.length,
-                agentsCount: agents.length,
-                docsCount: scannedDocs.length,
-              },
-            }),
-          });
+        // Check high-speed client memory cache first
+        const clientCached = kiaClientCache.get(text, activeRole);
+        if (clientCached) {
+          doneData = {
+            ...clientCached,
+            fullContent: clientCached.content,
+            cached: true,
+          };
+          accumulatedContent = clientCached.content;
+          streamFinished = true;
+        } else {
+          try {
+            const response = await fetch("/api/kia/stream", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                message: text,
+                history: chatMessages.slice(-6).map((m) => ({
+                  role: m.role,
+                  content: m.content,
+                })),
+                userRole: activeRole,
+                userName: currentUser.name,
+                contextData: {
+                  tasksCount: tasks.length,
+                  knowledgeCount: knowledge.length,
+                  agentsCount: agents.length,
+                  docsCount: scannedDocs.length,
+                },
+              }),
+            });
 
-          if (response.ok && response.body) {
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = "";
+            if (response.ok && response.body) {
+              const reader = response.body.getReader();
+              const decoder = new TextDecoder();
+              let buffer = "";
 
-            while (true) {
-              const { value, done } = await reader.read();
-              if (done) break;
+              while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
 
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split("\n\n");
-              buffer = lines.pop() || "";
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split("\n\n");
+                buffer = lines.pop() || "";
 
-              for (const line of lines) {
-                if (line.startsWith("data: ")) {
-                  try {
-                    const payload = JSON.parse(line.slice(6));
-                    if (payload.type === "chunk" && payload.text) {
-                      accumulatedContent += payload.text;
-                      setChatMessages((prev) =>
-                        prev.map((msg) =>
-                          msg.id === assistantMsgId
-                            ? { ...msg, content: accumulatedContent, isStreaming: true }
-                            : msg
-                        )
-                      );
-                    } else if (payload.type === "done") {
-                      doneData = payload;
+                for (const line of lines) {
+                  if (line.startsWith("data: ")) {
+                    try {
+                      const payload = JSON.parse(line.slice(6));
+                      if (payload.type === "chunk" && payload.text) {
+                        accumulatedContent += payload.text;
+                        setChatMessages((prev) =>
+                          prev.map((msg) =>
+                            msg.id === assistantMsgId
+                              ? { ...msg, content: accumulatedContent, isStreaming: true }
+                              : msg
+                          )
+                        );
+                      } else if (payload.type === "done") {
+                        doneData = payload;
+                      }
+                    } catch {
+                      // Ignore JSON partial chunk parsing errors
                     }
-                  } catch {
-                    // Ignore JSON partial chunk parsing errors
                   }
                 }
               }
+              streamFinished = true;
+            } else {
+              throw new Error(`Streaming failed with status: ${response.status}`);
             }
-            streamFinished = true;
-          } else {
-            throw new Error(`Streaming failed with status: ${response.status}`);
-          }
-        } catch (streamErr) {
-          console.warn("Real-time stream failed, falling back to /api/kia/chat:", streamErr);
-          const fallbackRes = await fetch("/api/kia/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              message: text,
-              history: chatMessages.slice(-6).map((m) => ({
-                role: m.role,
-                content: m.content,
-              })),
-              userRole: activeRole,
-              userName: currentUser.name,
-              contextData: {
-                tasksCount: tasks.length,
-                knowledgeCount: knowledge.length,
-                agentsCount: agents.length,
-                docsCount: scannedDocs.length,
-              },
-            }),
-          });
+          } catch (streamErr) {
+            console.warn("Real-time stream failed, falling back to /api/kia/chat:", streamErr);
+            const fallbackRes = await fetch("/api/kia/chat", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                message: text,
+                history: chatMessages.slice(-6).map((m) => ({
+                  role: m.role,
+                  content: m.content,
+                })),
+                userRole: activeRole,
+                userName: currentUser.name,
+                contextData: {
+                  tasksCount: tasks.length,
+                  knowledgeCount: knowledge.length,
+                  agentsCount: agents.length,
+                  docsCount: scannedDocs.length,
+                },
+              }),
+            });
 
-          if (fallbackRes.ok) {
-            doneData = await fallbackRes.json();
-            accumulatedContent = doneData.content || "";
-          } else {
-            throw new Error(`Fallback failed: ${fallbackRes.status}`);
+            if (fallbackRes.ok) {
+              doneData = await fallbackRes.json();
+              accumulatedContent = doneData.content || "";
+            } else {
+              throw new Error(`Fallback failed: ${fallbackRes.status}`);
+            }
           }
         }
 
         const finalContent = doneData?.fullContent || doneData?.content || accumulatedContent || "Instrução processada com sucesso.";
+
+        // Store into client cache for instant repeat query replay
+        if (finalContent && !clientCached) {
+          kiaClientCache.set(text, {
+            content: finalContent,
+            intent: doneData?.intent || "conversation",
+            capability: doneData?.capability || "conversation:chat",
+            executionStatus: doneData?.executionStatus || "SUCCESS",
+            toolsUsed: doneData?.toolsUsed || ["gemini-streaming-core"],
+            suggestedPrompts: doneData?.suggestedPrompts,
+            actionCard: doneData?.actionCard,
+            actionPayload: doneData?.actionPayload,
+            modelName: doneData?.modelName,
+          }, activeRole);
+        }
 
         // Check if action payload requires automatic state execution & API dispatch
         if (doneData?.actionPayload) {

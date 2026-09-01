@@ -21,11 +21,13 @@ import {
 import { useApp } from "../context/AppContext";
 import { Agent, AgentStatus } from "../types";
 import { AgentAvatar, getAgentVisualMetadata } from "./AgentAvatar";
+import { AgentEditModal } from "./AgentEditModal";
 
 export const AgentsView: React.FC = () => {
   const {
     agents,
     skills,
+    updateAgent,
     updateAgentStatus,
     duplicateAgent,
     deleteAgent,
@@ -36,10 +38,16 @@ export const AgentsView: React.FC = () => {
   } = useApp();
 
   const [selectedAgent, setSelectedAgent] = useState<Agent>(agents[0] || null);
+  const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
 
   const handleTestAgentInKia = (agent: Agent) => {
     setActiveTab("kia");
     sendKiaMessage(`Quero interagir com o agente "${agent.name}" (${agent.slug}). Qual é o teu plano operacional para o seu objetivo: "${agent.objective}"?`);
+  };
+
+  const handleSaveAgentEdit = (updatedAgent: Agent) => {
+    updateAgent(updatedAgent.id, updatedAgent);
+    setSelectedAgent(updatedAgent);
   };
 
   return (
@@ -210,6 +218,15 @@ export const AgentsView: React.FC = () => {
                   </select>
 
                   <button
+                    onClick={() => setEditingAgent(selectedAgent)}
+                    className="flex items-center space-x-1.5 px-3 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-bold text-xs rounded-xl shadow-md transition-all active:scale-95"
+                    title="Editar características, skills, permissões e system prompt deste agente"
+                  >
+                    <Edit className="w-3.5 h-3.5" />
+                    <span>Editar Características</span>
+                  </button>
+
+                  <button
                     onClick={() => handleTestAgentInKia(selectedAgent)}
                     className="flex items-center space-x-1.5 px-3 py-1.5 bg-gradient-to-r from-amber-500 to-yellow-500 text-black font-bold text-xs rounded-xl shadow-md hover:scale-105 transition-all"
                   >
@@ -339,6 +356,17 @@ export const AgentsView: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Edit Agent Modal */}
+      {editingAgent && (
+        <AgentEditModal
+          agent={editingAgent}
+          isOpen={!!editingAgent}
+          onClose={() => setEditingAgent(null)}
+          onSave={handleSaveAgentEdit}
+          skills={skills}
+        />
+      )}
     </div>
   );
 };

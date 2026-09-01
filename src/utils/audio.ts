@@ -233,18 +233,29 @@ export async function playPcmAudio(base64Data: string, sampleRate = 24000): Prom
   const ctx = getAudioContext();
   if (!ctx) return;
 
+  if (ctx.state === "suspended") {
+    try {
+      await ctx.resume();
+    } catch {}
+  }
+
   const binaryString = atob(base64Data);
   const len = binaryString.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
+  // Ensure even number of bytes for 16-bit PCM
+  const pcmBytesCount = Math.floor(len / 2) * 2;
+  const buffer = new ArrayBuffer(pcmBytesCount);
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < pcmBytesCount; i++) {
     bytes[i] = binaryString.charCodeAt(i);
   }
 
-  // 16-bit signed PCM
-  const int16Array = new Int16Array(bytes.buffer);
-  const float32Array = new Float32Array(int16Array.length);
-  for (let i = 0; i < int16Array.length; i++) {
-    float32Array[i] = int16Array[i] / 32768;
+  // 16-bit signed PCM little-endian
+  const dataView = new DataView(buffer);
+  const samplesCount = pcmBytesCount / 2;
+  const float32Array = new Float32Array(samplesCount);
+  for (let i = 0; i < samplesCount; i++) {
+    const int16 = dataView.getInt16(i * 2, true);
+    float32Array[i] = int16 / 32768;
   }
 
   const audioBuffer = ctx.createBuffer(1, float32Array.length, sampleRate);
@@ -350,6 +361,99 @@ function getBestPortugueseVoice(): SpeechSynthesisVoice | null {
   return voices.find((v) => v.default) || voices[0] || null;
 }
 
+// Speak text using browser SpeechSynthesis
+async function speakViaBrowserSynthesis(
+  chunks: string[],
+  onEnd?: () => void
+): Promise<boolean> {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+    return false;
+  }
+
+  return new Promise((resolve) => {
+    try {
+      window.speechSynthesis.cancel();
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
+      }
+
+      wakeWordDetector.setMutedForPlayback(true);
+
+      // Keep-alive watchdog for Chrome SpeechSynthesis 14s bug
+      if (chromeKeepAliveInterval) clearInterval(chromeKeepAliveInterval);
+      chromeKeepAliveInterval = setInterval(() => {
+        if (isCurrentlySpeaking && typeof window !== "undefined" && "speechSynthesis" in window) {
+          window.speechSynthesis.pause();
+          window.speechSynthesis.resume();
+        }
+      }, 8000);
+
+      let chunkIndex = 0;
+
+      const speakNextChunk = () => {
+        if (!isCurrentlySpeaking || chunkIndex >= chunks.length) {
+          stopTtsAudio();
+          onEnd?.();
+          resolve(true);
+          return;
+        }
+
+        const currentText = chunks[chunkIndex];
+        chunkIndex++;
+
+        const utterance = new SpeechSynthesisUtterance(currentText);
+        utterance.lang = "pt-PT";
+        utterance.rate = 1.08;
+        utterance.pitch = 1.0;
+
+        const voice = getBestPortugueseVoice();
+        if (voice) {
+          utterance.voice = voice;
+        }
+
+        utterance.onend = () => {
+          if (chunkIndex < chunks.length && isCurrentlySpeaking) {
+            setTimeout(speakNextChunk, 30);
+          } else {
+            stopTtsAudio();
+            onEnd?.();
+            resolve(true);
+          }
+        };
+
+        utterance.onerror = (e) => {
+          console.debug("Speech synthesis chunk event:", e);
+          if (chunkIndex < chunks.length && isCurrentlySpeaking) {
+            speakNextChunk();
+          } else {
+            stopTtsAudio();
+            onEnd?.();
+            resolve(true);
+          }
+        };
+
+        window.speechSynthesis.speak(utterance);
+      };
+
+      if (window.speechSynthesis.getVoices().length > 0) {
+        speakNextChunk();
+      } else {
+        window.speechSynthesis.onvoiceschanged = () => {
+          speakNextChunk();
+        };
+        setTimeout(() => {
+          if (isCurrentlySpeaking && !window.speechSynthesis.speaking) {
+            speakNextChunk();
+          }
+        }, 60);
+      }
+    } catch (err) {
+      console.warn("Browser SpeechSynthesis error:", err);
+      resolve(false);
+    }
+  });
+}
+
 // Natural voice output with dual-engine fallback & sentence chunking
 export async function speakNaturalText(
   text: string,
@@ -361,7 +465,7 @@ export async function speakNaturalText(
     onError?: (err: any) => void;
   } = {}
 ): Promise<void> {
-  const { voiceName = "Kore", engine = "instant_browser", onStart, onEnd, onError } = options;
+  const { voiceName = "Kore", engine = "auto", onStart, onEnd, onError } = options;
   const clean = sanitizeForVoice(text);
   if (!clean) {
     onEnd?.();
@@ -372,122 +476,44 @@ export async function speakNaturalText(
   isCurrentlySpeaking = true;
   onStart?.();
 
-  // Limit to reasonable conversational snippet (up to 450 chars) to prevent speech fatigue
+  // Limit to conversational snippet (up to 480 chars) to prevent speech fatigue
   const voiceSnippet = clean.length > 500 ? clean.slice(0, 480) + "..." : clean;
   const chunks = splitIntoSpokenChunks(voiceSnippet);
 
-  // 1. Instant Browser SpeechSynthesis with sequential chunk playback
-  if (engine === "instant_browser" || engine === "auto") {
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      try {
-        window.speechSynthesis.cancel();
-        if (window.speechSynthesis.paused) {
-          window.speechSynthesis.resume();
-        }
+  // 1. Try Server Gemini Studio TTS First if engine is 'auto' or 'gemini_studio'
+  if (engine === "gemini_studio" || engine === "auto") {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
 
-        wakeWordDetector.setMutedForPlayback(true);
+      const res = await fetch("/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: voiceSnippet,
+          voiceName,
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
 
-        // Keep-alive watchdog for Chrome SpeechSynthesis 14s bug
-        if (chromeKeepAliveInterval) clearInterval(chromeKeepAliveInterval);
-        chromeKeepAliveInterval = setInterval(() => {
-          if (isCurrentlySpeaking && typeof window !== "undefined" && "speechSynthesis" in window) {
-            window.speechSynthesis.pause();
-            window.speechSynthesis.resume();
-          }
-        }, 8000);
-
-        let chunkIndex = 0;
-
-        const speakNextChunk = () => {
-          if (!isCurrentlySpeaking || chunkIndex >= chunks.length) {
-            stopTtsAudio();
-            onEnd?.();
-            return;
-          }
-
-          const currentText = chunks[chunkIndex];
-          chunkIndex++;
-
-          const utterance = new SpeechSynthesisUtterance(currentText);
-          utterance.lang = "pt-PT";
-          utterance.rate = 1.08;
-          utterance.pitch = 1.0;
-
-          const voice = getBestPortugueseVoice();
-          if (voice) {
-            utterance.voice = voice;
-          }
-
-          utterance.onend = () => {
-            if (chunkIndex < chunks.length && isCurrentlySpeaking) {
-              setTimeout(speakNextChunk, 30);
-            } else {
-              stopTtsAudio();
-              onEnd?.();
-            }
-          };
-
-          utterance.onerror = (e) => {
-            console.debug("Speech synthesis chunk event:", e);
-            if (chunkIndex < chunks.length && isCurrentlySpeaking) {
-              speakNextChunk();
-            } else {
-              stopTtsAudio();
-              onEnd?.();
-            }
-          };
-
-          window.speechSynthesis.speak(utterance);
-        };
-
-        if (window.speechSynthesis.getVoices().length > 0) {
-          speakNextChunk();
-          return;
-        } else {
-          window.speechSynthesis.onvoiceschanged = () => {
-            speakNextChunk();
-          };
-          setTimeout(() => {
-            if (isCurrentlySpeaking && !window.speechSynthesis.speaking) {
-              speakNextChunk();
-            }
-          }, 60);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.audioBase64) {
+          await playPcmAudio(data.audioBase64, data.sampleRate || 24000);
+          isCurrentlySpeaking = false;
+          onEnd?.();
           return;
         }
-      } catch (err) {
-        console.warn("Browser SpeechSynthesis error, attempting fallback:", err);
       }
+    } catch (err) {
+      console.warn("Gemini Studio TTS unavailable, using natural browser synthesis:", err);
     }
   }
 
-  // 2. Gemini Neural Studio TTS endpoint fallback (24kHz audio)
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-    const res = await fetch("/api/tts", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        text: voiceSnippet,
-        voiceName,
-      }),
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-
-    if (res.ok) {
-      const data = await res.json();
-      if (data.audioBase64) {
-        await playPcmAudio(data.audioBase64, data.sampleRate || 24000);
-        isCurrentlySpeaking = false;
-        onEnd?.();
-        return;
-      }
-    }
-  } catch (err) {
-    console.warn("Gemini Studio TTS failed:", err);
-  }
+  // 2. High-performance Browser SpeechSynthesis fallback
+  const synthesisSuccess = await speakViaBrowserSynthesis(chunks, onEnd);
+  if (synthesisSuccess) return;
 
   // 3. Final safety resolve
   stopTtsAudio();
