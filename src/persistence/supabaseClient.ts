@@ -52,9 +52,99 @@ class InMemoryRelationalEngine {
       "artifacts",
       "knowledge_items",
       "audit_events",
+      "conversations",
+      "conversation_messages",
+      "long_term_memories",
+      "owner_decisions",
+      "client_contexts",
+      "unified_sessions",
+      "meeting_minutes",
+      "deliverables",
     ];
     for (const t of tableNames) {
       this.tables.set(t, new Map());
+    }
+    this.seedInitialMemoryRecords();
+  }
+
+  private seedInitialMemoryRecords(): void {
+    const decisions = [
+      {
+        id: "dec-01",
+        title: "Regra do Sinal de 50%",
+        decision: "Qualquer proposta ou projeto da GAG Visual exige 50% de sinal adiantado antes do início dos trabalhos.",
+        rationale: "Garantia de liquidez operacional e compromisso formal do cliente.",
+        category: "FINANCIAL_POLICY",
+        appliedCount: 42,
+        timestamp: "2026-08-01T10:00:00Z",
+      },
+      {
+        id: "dec-02",
+        title: "Metodologia TOB",
+        decision: "Toda a consultoria e ecossistema são fundamentados no tripé Tecnologia, Organização e Branding.",
+        rationale: "Diferenciação estratégica no mercado de Angola.",
+        category: "BRAND_POLICY",
+        appliedCount: 68,
+        timestamp: "2026-08-05T14:30:00Z",
+      },
+      {
+        id: "dec-03",
+        title: "Cotação Exclusiva em AOA",
+        decision: "Todas as propostas, pacotes e valores apresentados aos clientes devem ser estritamente expressos em Kwanzas (AOA).",
+        rationale: "Alinhamento com a legislação angolana e estabilidade cambial em Luanda.",
+        category: "PRICING_POLICY",
+        appliedCount: 89,
+        timestamp: "2026-08-10T09:00:00Z",
+      },
+      {
+        id: "dec-04",
+        title: "Taxa de Urgência 48h",
+        decision: "Projetos solicitados para entrega em até 48 horas têm acréscimo obrigatório de +50% sobre o valor base.",
+        rationale: "Compensação pelo remanejamento de recursos e horas extraordinárias dos agentes.",
+        category: "PRICING_POLICY",
+        appliedCount: 15,
+        timestamp: "2026-08-15T16:00:00Z",
+      },
+    ];
+
+    const clientContexts = [
+      {
+        id: "ctx-anda-jussara",
+        clientName: "Jussara (ANDA)",
+        phone: "+244 923 881 223",
+        company: "ANDA — Agência Nacional dos Transportes Terrestres",
+        context: "Interesse em pacotes de vídeos promocionais, reels de alta conversão e presença digital. Opções de 180.000 a 600.000 AOA.",
+        status: "PROPOSAL_PENDING",
+        lastMeeting: "2026-08-28",
+        keyRequirements: ["Roteiros dinâmicos", "Captação em Luanda", "Relatório de métricas"],
+      },
+      {
+        id: "ctx-dr-kwanza",
+        clientName: "Dr. Manuel Kwanza",
+        phone: "+244 923 456 789",
+        company: "Clínica Médica Kwanza Luanda",
+        context: "Projeto de rebranding institucional e atração de novos pacientes particulares via tráfego pago geolocalizado.",
+        status: "ACTIVE_LEAD",
+        lastMeeting: "2026-09-01",
+        keyRequirements: ["Identidade visual sóbria", "Meta Ads focado em Luanda Sul", "Atendimento WhatsApp 24/7"],
+      },
+      {
+        id: "ctx-eng-teresa",
+        clientName: "Eng.ª Teresa Silva",
+        phone: "+244 945 112 334",
+        company: "Silva Empreendimentos",
+        context: "Cliente ativa com gestão semanal de tráfego pago (ROAS médio de 4.8x). Exige envio de relatórios em PDF com métricas consolidadas.",
+        status: "RETAINER_CLIENT",
+        lastMeeting: "2026-08-30",
+        keyRequirements: ["Relatórios semanais PDF", "Otimização contínua de CPA", "Comunicação executiva via WhatsApp"],
+      },
+    ];
+
+    for (const d of decisions) {
+      this.insert("owner_decisions", d);
+    }
+    for (const c of clientContexts) {
+      this.insert("client_contexts", c);
     }
   }
 

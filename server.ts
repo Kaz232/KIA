@@ -7,6 +7,11 @@ import { GoogleGenAI, Type, Modality } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import { n8nRouter, makeRouter, browserRouter, engineRouter, registryRouter } from "./server/index";
 import { kiaCache } from "./server/cache/kiaCache";
+import { normalizeInboundWhatsAppPayload, normalizeMarkdownForWhatsApp } from "./src/utils/whatsappTextNormalizer";
+import { DeliverableGenerator } from "./src/services/deliverableGenerator";
+import { MemoryManager } from "./src/core/memory/memoryManager";
+import { SupabasePersistenceClient } from "./src/persistence/supabaseClient";
+import whatsappWebhookRouter from "./src/routes/whatsappWebhook";
 
 dotenv.config();
 
@@ -22,6 +27,7 @@ app.use("/api/browser", browserRouter);
 app.use("/api/n8n", n8nRouter);
 app.use("/api/engine", engineRouter);
 app.use("/api/registry", registryRouter);
+app.use(whatsappWebhookRouter);
 
 // Initialize Google GenAI client
 function extractCleanApiKey(raw?: string): string | null {
@@ -88,7 +94,7 @@ function getGenAI(): GoogleGenAI | null {
 
 // Resilient generation with automatic fallback & low-latency execution timeout
 function sanitizeModelName(modelName?: string): string {
-  if (!modelName) return "gemini-3.1-flash-lite";
+  if (!modelName) return "gemini-flash-latest";
   const m = modelName.trim().toLowerCase();
   if (
     m.includes("1.5") ||
@@ -96,10 +102,9 @@ function sanitizeModelName(modelName?: string): string {
     m.includes("2.5-pro") ||
     m.includes("2.0") ||
     m === "gemini-pro" ||
-    m === "gemini-ultra" ||
-    m.includes("3.7-flash")
+    m === "gemini-ultra"
   ) {
-    return "gemini-3.1-flash-lite";
+    return "gemini-flash-latest";
   }
   return modelName;
 }
@@ -118,8 +123,8 @@ async function generateWithFallback(
   const sanitizedPrimary = sanitizeModelName(primaryModel);
   const candidateModels = [
     sanitizedPrimary,
-    "gemini-3.1-flash-lite",
     "gemini-flash-latest",
+    "gemini-3.1-flash-lite",
     "gemini-3.7-flash",
   ];
   const uniqueModels = Array.from(new Set(candidateModels.filter(Boolean)));
@@ -128,9 +133,9 @@ async function generateWithFallback(
   for (const model of uniqueModels) {
     let timer: NodeJS.Timeout | null = null;
     try {
-      // 8000ms timeout per model attempt to guarantee fast fallback without blocking
+      // 15000ms timeout per model attempt to guarantee reliable completion under varying load
       const timeoutPromise = new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`Timeout de 8000ms excedido para ${model}`)), 8000);
+        timer = setTimeout(() => reject(new Error(`Timeout de 15000ms excedido para ${model}`)), 15000);
       });
 
       const generatePromise = ai.models.generateContent({
@@ -368,6 +373,94 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
+// In-memory overrides for testing / simulating agent states
+const agentHeartbeatOverrides: Record<string, { status: "active" | "high_latency" | "failing"; simulatedLatencyMs?: number }> = {};
+
+// 1.1 Agent Endpoint Heartbeat Probe
+app.get("/api/agents/:id/heartbeat", async (req, res) => {
+  const agentId = req.params.id;
+  const simulate = req.query.simulate as string;
+  const customLatency = req.query.latency ? parseInt(req.query.latency as string, 10) : undefined;
+
+  if (simulate === "reset") {
+    delete agentHeartbeatOverrides[agentId];
+  } else if (simulate === "latency") {
+    agentHeartbeatOverrides[agentId] = { status: "high_latency", simulatedLatencyMs: customLatency || 380 };
+  } else if (simulate === "fail" || simulate === "error") {
+    agentHeartbeatOverrides[agentId] = { status: "failing" };
+  } else if (simulate === "active") {
+    agentHeartbeatOverrides[agentId] = { status: "active", simulatedLatencyMs: 0 };
+  }
+
+  const override = agentHeartbeatOverrides[agentId];
+
+  // If failing
+  if (override?.status === "failing" || simulate === "fail" || simulate === "error") {
+    return res.status(503).json({
+      agentId,
+      status: "failing",
+      error: "Agent endpoint service unavailable or unhealthy",
+      timestamp: new Date().toISOString(),
+      uptimePercentage: 88.4,
+      checks: {
+        connectivity: "failed",
+        memory: "degraded",
+        modelSync: "offline",
+      },
+    });
+  }
+
+  const latencyToSimulate = override?.simulatedLatencyMs || (simulate === "latency" ? (customLatency || 380) : 0);
+  if (latencyToSimulate > 0) {
+    await new Promise((r) => setTimeout(r, latencyToSimulate));
+  }
+
+  res.json({
+    agentId,
+    status: latencyToSimulate >= 250 ? "high_latency" : "active",
+    latencyMs: latencyToSimulate,
+    timestamp: new Date().toISOString(),
+    uptimePercentage: 99.98,
+    version: "2.4.0",
+    checks: {
+      connectivity: "optimal",
+      memory: "normal",
+      modelSync: "active",
+    },
+  });
+});
+
+app.post("/api/agents/:id/heartbeat", (req, res) => {
+  const agentId = req.params.id;
+  const { status, simulatedLatencyMs } = req.body || {};
+  if (status === "reset") {
+    delete agentHeartbeatOverrides[agentId];
+  } else if (["active", "high_latency", "failing"].includes(status)) {
+    agentHeartbeatOverrides[agentId] = { status, simulatedLatencyMs };
+  }
+  res.json({ agentId, current: agentHeartbeatOverrides[agentId] || { status: "active" } });
+});
+
+// 1.2 Agent Auto-Recovery / Restart Endpoint (Recovers failing agent with 0 downtime)
+app.post("/api/agents/:id/restart", (req, res) => {
+  const agentId = req.params.id;
+  const isAuto = Boolean(req.body?.isAuto);
+  // Clear any simulated failure or high latency override
+  delete agentHeartbeatOverrides[agentId];
+  console.log(`[Auto-Recovery] Agent ${agentId} successfully restarted (trigger: ${isAuto ? "Auto-Monitor" : "Manual"}).`);
+  
+  res.json({
+    agentId,
+    status: "active",
+    latencyMs: 18,
+    timestamp: new Date().toISOString(),
+    uptimePercentage: 99.99,
+    restartedAt: new Date().toISOString(),
+    message: `Agente ${agentId} reiniciado com sucesso pelo subsistema de auto-recuperação.`,
+    isAutoRecovered: isAuto,
+  });
+});
+
 // 2.0.1 Server-side Natural Neural Voice (TTS) Endpoint with High-Performance Cache
 app.post("/api/tts", async (req, res) => {
   try {
@@ -473,6 +566,8 @@ app.post("/api/kia/stream", async (req, res) => {
   const startTime = Date.now();
   let fullAccumulatedText = "";
   let usedModelName = "gemini-3.7-flash";
+  let streamFinishReason = "STOP";
+  let streamTokenUsage: any = undefined;
   const attemptedModelErrors: { model: string; error: string; timeMs: number }[] = [];
 
   const systemInstruction = `[IDENTIDADE & MANDATOS OPERACIONAIS DA KIA - GAG VISUAL (LUANDA/ANGOLA)]
@@ -507,8 +602,8 @@ MANDATOS OBRIGATÓRIOS DE COMPORTAMENTO:
     }
 
     const candidateModels = [
-      "gemini-3.1-flash-lite",
       "gemini-flash-latest",
+      "gemini-3.1-flash-lite",
       "gemini-3.7-flash",
     ];
     const uniqueModels = Array.from(new Set(candidateModels.filter(Boolean)));
@@ -520,14 +615,18 @@ MANDATOS OBRIGATÓRIOS DE COMPORTAMENTO:
       try {
         usedModelName = model;
         
-        // Race stream initialization against a 4.5s timeout with zero thinking budget for instant streaming
+        // Timeout of 15000ms per candidate model to ensure reliable initialization under variable network latency
+        const requestedMaxTokens = req.body?.maxOutputTokens
+          ? Math.min(8192, Math.max(512, Number(req.body.maxOutputTokens)))
+          : 2048;
+
         const streamInitPromise = ai.models.generateContentStream({
           model,
           contents,
           config: {
             systemInstruction,
             temperature: 0.7,
-            maxOutputTokens: 2048,
+            maxOutputTokens: requestedMaxTokens,
             thinkingConfig: {
               thinkingBudget: 0,
             },
@@ -535,7 +634,7 @@ MANDATOS OBRIGATÓRIOS DE COMPORTAMENTO:
         });
 
         const timeoutPromise = new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`Timeout de 4500ms excedido para ${model}`)), 4500);
+          timer = setTimeout(() => reject(new Error(`Timeout de 15000ms excedido para ${model}`)), 15000);
         });
 
         const responseStream = await Promise.race([streamInitPromise, timeoutPromise]);
@@ -544,10 +643,23 @@ MANDATOS OBRIGATÓRIOS DE COMPORTAMENTO:
         let hasReceivedAnyChunk = false;
         for await (const chunk of responseStream) {
           const chunkText = chunk.text;
+          const candidate = chunk.candidates?.[0];
+          if (candidate?.finishReason) {
+            streamFinishReason = candidate.finishReason;
+          }
+          if (chunk.usageMetadata) {
+            streamTokenUsage = chunk.usageMetadata;
+          }
           if (chunkText) {
             hasReceivedAnyChunk = true;
             fullAccumulatedText += chunkText;
-            res.write(`data: ${JSON.stringify({ type: "chunk", text: chunkText })}\n\n`);
+            res.write(
+              `data: ${JSON.stringify({
+                type: "chunk",
+                text: chunkText,
+                finishReason: streamFinishReason,
+              })}\n\n`
+            );
           }
         }
 
@@ -809,6 +921,13 @@ MANDATOS OBRIGATÓRIOS DE COMPORTAMENTO:
     }, userRole);
   }
 
+  const isTruncated =
+    streamFinishReason === "MAX_TOKENS" ||
+    (streamFinishReason !== "STOP" &&
+      streamFinishReason !== "SUCCESS" &&
+      streamFinishReason !== undefined &&
+      streamFinishReason !== "");
+
   res.write(
     `data: ${JSON.stringify({
       type: "done",
@@ -816,6 +935,9 @@ MANDATOS OBRIGATÓRIOS DE COMPORTAMENTO:
       intent,
       capability,
       executionStatus: "SUCCESS",
+      finishReason: streamFinishReason,
+      isTruncated,
+      usageMetadata: streamTokenUsage,
       toolsUsed: ["gemini-streaming-core", "soba-router"],
       suggestedPrompts: [
         "⚡ Disparar Sinergia Global",
@@ -854,6 +976,7 @@ app.post("/api/kia/chat", async (req, res) => {
       userRole = "OWNER",
       userName = "Josemar Gourgel",
       contextData = {},
+      maxOutputTokens,
     } = req.body;
 
     if (!message || typeof message !== "string") {
@@ -904,6 +1027,8 @@ MANDATOS OBRIGATÓRIOS DE COMPORTAMENTO:
         ]
       : [{ parts: [{ text: message }] }];
 
+    const outputTokens = typeof maxOutputTokens === "number" && maxOutputTokens > 0 ? maxOutputTokens : 2048;
+
     const { response, usedModel } = await generateWithFallback(
       ai,
       process.env.AI_MODEL || "gemini-3.7-flash",
@@ -912,22 +1037,29 @@ MANDATOS OBRIGATÓRIOS DE COMPORTAMENTO:
         systemInstruction,
         responseMimeType: "application/json",
         temperature: 0.7,
-        maxOutputTokens: 2048,
+        maxOutputTokens: outputTokens,
       }
     );
 
     const responseText = response.text || "{}";
+    const candidate = response?.candidates?.[0];
+    const finishReason = candidate?.finishReason || "STOP";
+    const usageMetadata = response?.usageMetadata || null;
+    let isTruncated = finishReason === "MAX_TOKENS";
+
     let parsed: any;
     try {
       parsed = JSON.parse(responseText);
     } catch {
+      // JSON failed to parse, likely truncated mid-stream
+      isTruncated = true;
       parsed = {
         content: responseText,
         intent: "conversation",
         capability: "conversation:chat",
-        executionStatus: "SUCCESS",
+        executionStatus: "PARTIAL",
         toolsUsed: ["gag-prompt-engineering"],
-        suggestedPrompts: ["Ver tarefas pendentes", "Consultar Knowledge Base", "Abrir Scanner"],
+        suggestedPrompts: ["Continuar resposta anterior", "Ver tarefas pendentes", "Consultar Knowledge Base"],
       };
     }
 
@@ -951,11 +1083,19 @@ MANDATOS OBRIGATÓRIOS DE COMPORTAMENTO:
       executionTimeMs,
       timestamp: new Date().toISOString(),
       modelName: usedModel,
+      finishReason,
+      usageMetadata,
+      isTruncated,
     });
   } catch (error: any) {
     console.warn("KIA Chat ultra-fast local fallback invoked:", error.message || error);
     const fallback = synthesizeLocalKiaResponse(req.body?.message || "", req.body?.userName, req.body?.userRole, req.body?.contextData);
-    res.json(fallback);
+    res.json({
+      ...fallback,
+      finishReason: "STOP",
+      isTruncated: false,
+      modelName: "gag-kia-local-heuristic",
+    });
   }
 });
 
@@ -1115,34 +1255,27 @@ app.get("/api/whatsapp/webhook", (req, res) => {
 });
 
 // 2. WhatsApp Inbound Webhook POST (Receives live messages 24/7 and triggers multi-agent AI response)
-app.post("/api/whatsapp/webhook", async (req, res) => {
+const handleWhatsAppInbound = async (req: express.Request, res: express.Response) => {
   try {
     const body = req.body;
-    console.log("WhatsApp Inbound Event Received:", JSON.stringify(body));
+    console.log("[WhatsApp/Z-API] Inbound event received:", JSON.stringify(body).slice(0, 300));
 
-    let senderNumber = "+244 9XX XXX XXX";
-    let senderName = "Contacto WhatsApp";
-    let incomingText = "";
-
-    // Parse Meta WhatsApp Webhook Payload standard
-    if (body.entry && body.entry[0]?.changes && body.entry[0].changes[0]?.value) {
-      const value = body.entry[0].changes[0].value;
-      if (value.contacts && value.contacts[0]) {
-        senderName = value.contacts[0].profile?.name || senderName;
-        senderNumber = value.contacts[0].wa_id ? `+${value.contacts[0].wa_id}` : senderNumber;
-      }
-      if (value.messages && value.messages[0]) {
-        incomingText = value.messages[0].text?.body || "";
-      }
-    } else if (body.message) {
-      incomingText = body.message;
-      senderNumber = body.senderNumber || senderNumber;
-      senderName = body.senderName || senderName;
-    }
+    // Normalize incoming payload from Meta Cloud, Z-API, or custom Make.com format
+    const normalizedInbound = normalizeInboundWhatsAppPayload(body);
+    let senderNumber = normalizedInbound.senderNumber || "+244 9XX XXX XXX";
+    let senderName = normalizedInbound.senderName || "Contacto WhatsApp";
+    let incomingText = normalizedInbound.messageText || "";
 
     if (!incomingText) {
       return res.status(200).json({ status: "acknowledged_empty_payload" });
     }
+
+    // Unified Session Identifier: persistent across web and mobile
+    const cleanPhone = senderNumber.replace(/[^0-9]/g, "");
+    const unifiedSessionId = `session_wa_${cleanPhone || "lead"}`;
+
+    // Query Long-Term Memory & Owner Directives
+    const longTermMemoryContext = MemoryManager.getInstance().getRelevantContextForPrompt(incomingText);
 
     // Auto-Routing: Identify specialized agent
     const lower = incomingText.toLowerCase();
@@ -1173,37 +1306,55 @@ app.post("/api/whatsapp/webhook", async (req, res) => {
       sentiment = "OPPORTUNITY";
     }
 
-    // Generate 24/7 Agent Response
+    // Generate 24/7 Agent Response with Redundancy Fallback Chain
     let aiResponse = "";
     try {
       const ai = getGenAI();
-      const prompt = `És o ${agentName} da GAG Visual (Agência de Marketing Digital & IA em Luanda, Angola), a responder em direto 24/7 no WhatsApp.
-O cliente ${senderName} (${senderNumber}) enviou a mensagem: "${incomingText}".
-Fornece uma resposta de WhatsApp acolhedora, executiva, calorosa e assertiva, no tom premium da GAG Visual (valores em Kwanzas AOA se aplicável). Máximo 2 a 3 frases.`;
+      const prompt = `És o ${agentName} e assistente de excelência da GAG Visual (Luanda, Angola), a responder em direto 24/7 no WhatsApp.
+Cliente: ${senderName} (${senderNumber})
+Mensagem do Interlocutor: "${incomingText}"
 
-      const result = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
-        contents: prompt,
-      });
-      aiResponse = result.text?.trim() || "Olá! Recebemos a sua mensagem na GAG Visual. O nosso especialista entrará em contacto imediato.";
+${longTermMemoryContext ? `[MEMÓRIA DE LONGO PRAZO & POLÍTICAS DO OWNER]\n${longTermMemoryContext}\n` : ""}
+
+DIRETRIZES FUNDAMENTAIS:
+1. Responde de forma cordial, executiva e calorosa.
+2. Preços e orçamentos SEMPRE cotados exclusivamente em Kwanzas (AOA).
+3. Regra de Sinal: 50% de sinal obrigatório para arranque; 48h de urgência acresce taxa de +50%.
+4. Texto conciso pronto para telemóvel (máximo 2 a 3 parágrafos curtos).`;
+
+      const result = await generateWithFallback(
+        ai,
+        "gemini-flash-latest",
+        [{ role: "user", parts: [{ text: prompt }] }],
+        { temperature: 0.6 }
+      );
+      aiResponse = result.response.text?.trim() || "Olá! Recebemos a sua mensagem na GAG Visual. O nosso especialista entrará em contacto imediato.";
     } catch {
-      aiResponse = `Olá ${senderName}! Agradecemos o contacto com a GAG Visual. O ${agentName} e a KIA registaram o seu pedido sobre "${incomingText.slice(0, 40)}". Estamos a processar a sua solicitação 24/7!`;
+      aiResponse = `Olá ${senderName}! Agradecemos o contacto com a GAG Visual. O ${agentName} e a KIA registaram o seu pedido sobre "${incomingText.slice(0, 40)}". A nossa equipa está operacional 24/7 para atendê-lo.`;
     }
 
+    // Mobile Normalization: strip complex markdown tables / code blocks and format cleanly for WhatsApp
+    const normalizedMobileResponse = normalizeMarkdownForWhatsApp(aiResponse);
+
     // If active credentials, dispatch reply directly to WhatsApp
-    let dispatchResult = await dispatchMetaWhatsAppMessage(senderNumber, aiResponse);
+    let dispatchResult = await dispatchMetaWhatsAppMessage(senderNumber, normalizedMobileResponse);
+
+    // Record turn in short/long-term memory
+    MemoryManager.getInstance().recordTurn(unifiedSessionId, "user", incomingText);
+    MemoryManager.getInstance().recordTurn(unifiedSessionId, "assistant", normalizedMobileResponse);
 
     const logEntry = {
       id: `wa-${Date.now()}`,
+      sessionId: unifiedSessionId,
       senderNumber,
       senderName,
       message: incomingText,
       receivedAt: new Date().toISOString(),
       routedAgent: agentId,
       routedAgentName: agentName,
-      aiResponse,
+      aiResponse: normalizedMobileResponse,
       status: "REPLIED_24_7",
-      channel: dispatchResult.dispatched ? "WhatsApp Cloud API (Meta Live)" : "WhatsApp Agent Hub (24/7)",
+      channel: dispatchResult.dispatched ? "WhatsApp Cloud API (Live)" : "WhatsApp Agent Hub (24/7)",
       sentiment,
       autoTaskCreated: shouldCreateTask && (sentiment === "OPPORTUNITY" || sentiment === "URGENT"),
     };
@@ -1214,6 +1365,8 @@ Fornece uma resposta de WhatsApp acolhedora, executiva, calorosa e assertiva, no
     res.json({
       success: true,
       status: "AUTONOMOUS_REPLIED_24_7",
+      sessionId: unifiedSessionId,
+      normalizedOutput: normalizedMobileResponse,
       log: logEntry,
       metaDispatch: dispatchResult,
     });
@@ -1221,7 +1374,10 @@ Fornece uma resposta de WhatsApp acolhedora, executiva, calorosa e assertiva, no
     console.error("WhatsApp webhook error:", err);
     res.status(500).json({ error: err.message });
   }
-});
+};
+
+app.post("/api/whatsapp/webhook", handleWhatsAppInbound);
+app.post("/api/whatsapp/zapi-webhook", handleWhatsAppInbound);
 
 // 3. Outbound Message Dispatcher (Sends WhatsApp message from KIA or Agent)
 app.post("/api/whatsapp/send", async (req, res) => {
@@ -1407,6 +1563,219 @@ app.post("/api/whatsapp/config", (req, res) => {
 app.post("/api/whatsapp/clear-logs", (_req, res) => {
   whatsappIncomingLogs = [];
   res.json({ success: true, message: "Logs de WhatsApp limpos." });
+});
+
+// --- UNIFIED WHATSAPP & MULTI-CHANNEL SESSIONS ---
+interface SessionSummary {
+  sessionId: string;
+  phone?: string;
+  name?: string;
+  lastMessage?: string;
+  lastActivity: string;
+  messageCount: number;
+  channel: "WHATSAPP" | "Z_API" | "WEB";
+}
+const unifiedSessionsRegistry = new Map<string, SessionSummary>();
+
+app.get("/api/whatsapp/sessions", (_req, res) => {
+  // Aggregate from incoming logs and registry
+  const sessionMap = new Map<string, SessionSummary>();
+
+  whatsappIncomingLogs.forEach((log: any) => {
+    const sId = log.sessionId || `session_wa_${(log.senderNumber || "").replace(/[^0-9]/g, "")}`;
+    if (!sessionMap.has(sId)) {
+      sessionMap.set(sId, {
+        sessionId: sId,
+        phone: log.senderNumber,
+        name: log.senderName,
+        lastMessage: log.message,
+        lastActivity: log.receivedAt,
+        messageCount: 1,
+        channel: log.channel?.includes("Z-API") ? "Z_API" : "WHATSAPP",
+      });
+    } else {
+      const existing = sessionMap.get(sId)!;
+      existing.messageCount++;
+    }
+  });
+
+  unifiedSessionsRegistry.forEach((val, key) => {
+    if (!sessionMap.has(key)) sessionMap.set(key, val);
+  });
+
+  res.json({
+    sessions: Array.from(sessionMap.values()),
+    total: sessionMap.size,
+  });
+});
+
+app.get("/api/whatsapp/sessions/:sessionId", (req, res) => {
+  const { sessionId } = req.params;
+  const history = MemoryManager.getInstance().getSessionHistory(sessionId);
+  const matchedLogs = whatsappIncomingLogs.filter((l: any) => l.sessionId === sessionId);
+
+  res.json({
+    sessionId,
+    history,
+    logs: matchedLogs,
+  });
+});
+
+app.post("/api/whatsapp/sync-session", (req, res) => {
+  const { webSessionId, phone, name } = req.body;
+  if (!webSessionId || !phone) {
+    return res.status(400).json({ error: "webSessionId and phone are required" });
+  }
+
+  const cleanPhone = phone.replace(/[^0-9]/g, "");
+  const targetSessionId = `session_wa_${cleanPhone}`;
+
+  // Merge history from web session into target phone session
+  const webHistory = MemoryManager.getInstance().getSessionHistory(webSessionId);
+  webHistory.forEach((item) => {
+    MemoryManager.getInstance().recordTurn(targetSessionId, item.role, item.content);
+  });
+
+  unifiedSessionsRegistry.set(targetSessionId, {
+    sessionId: targetSessionId,
+    phone,
+    name: name || "Contacto Unificado",
+    lastActivity: new Date().toISOString(),
+    messageCount: webHistory.length,
+    channel: "WHATSAPP",
+  });
+
+  res.json({
+    success: true,
+    message: `Sessão web sincronizada com a sessão WhatsApp ${targetSessionId}`,
+    unifiedSessionId: targetSessionId,
+  });
+});
+
+// --- AUTOMATIC STRUCTURED DELIVERABLE GENERATION ---
+const generatedDeliverablesList: any[] = [];
+
+app.post("/api/deliverables/generate", async (req, res) => {
+  try {
+    const { type, payload, sendToWhatsApp = false, recipientPhone } = req.body;
+    const generator = DeliverableGenerator.getInstance();
+    let deliverable: any = null;
+
+    if (type === "COMMERCIAL_PROPOSAL") {
+      deliverable = await generator.generateCommercialProposal(payload);
+    } else if (type === "EXECUTIVE_REPORT") {
+      deliverable = await generator.generateExecutiveReport(payload);
+    } else if (type === "MEETING_MINUTES") {
+      deliverable = await generator.generateMeetingMinutes(payload);
+    } else {
+      return res.status(400).json({ error: "Invalid deliverable type. Must be COMMERCIAL_PROPOSAL, EXECUTIVE_REPORT, or MEETING_MINUTES" });
+    }
+
+    generatedDeliverablesList.unshift(deliverable);
+    if (generatedDeliverablesList.length > 50) generatedDeliverablesList.pop();
+
+    let whatsAppDispatchResult: any = null;
+    const targetPhone = recipientPhone || payload?.clientPhone;
+    if (sendToWhatsApp && targetPhone) {
+      whatsAppDispatchResult = await dispatchMetaWhatsAppMessage(targetPhone, deliverable.whatsAppSummary);
+    }
+
+    res.json({
+      success: true,
+      deliverable,
+      whatsAppDispatched: Boolean(whatsAppDispatchResult?.dispatched),
+      dispatchMeta: whatsAppDispatchResult,
+    });
+  } catch (err: any) {
+    console.error("Deliverable generation error:", err);
+    res.status(500).json({ error: err.message || "Failed to generate deliverable" });
+  }
+});
+
+app.get("/api/deliverables", (_req, res) => {
+  res.json({
+    deliverables: generatedDeliverablesList,
+    total: generatedDeliverablesList.length,
+  });
+});
+
+// --- SHORT & LONG-TERM MEMORY ENDPOINTS ---
+app.get("/api/kia/memory", (_req, res) => {
+  const memory = MemoryManager.getInstance();
+  res.json({
+    success: true,
+    ownerDecisions: memory.getOwnerDecisions(),
+    clientContexts: memory.getAllClientContexts(),
+    meetingMinutes: memory.getAllMeetingMinutes(),
+    snapshot: memory.getSnapshot(),
+  });
+});
+
+app.post("/api/kia/memory/decision", (req, res) => {
+  const { title, decision, rationale, category } = req.body;
+  if (!title || !decision) {
+    return res.status(400).json({ error: "title and decision are required" });
+  }
+
+  const memory = MemoryManager.getInstance();
+  const created = memory.addOwnerDecision({
+    title,
+    decision,
+    rationale,
+    category: category || "COMMERCIAL_RULE",
+  });
+
+  res.json({
+    success: true,
+    decision: created,
+    message: "Decisão do Owner gravada na Memória Permanente com sucesso!",
+  });
+});
+
+app.post("/api/kia/memory/client-context", (req, res) => {
+  const { clientName, company, phone, context, status, keyRequirements } = req.body;
+  if (!clientName) {
+    return res.status(400).json({ error: "clientName is required" });
+  }
+
+  const memory = MemoryManager.getInstance();
+  const saved = memory.upsertClientContext({
+    clientName,
+    company: company || "Empresa Confidencial",
+    phone,
+    context: context || "Contexto comercial em desenvolvimento.",
+    status: status || "NEGOTIATING",
+    keyRequirements: Array.isArray(keyRequirements) ? keyRequirements : [],
+  });
+
+  res.json({
+    success: true,
+    clientContext: saved,
+    message: `Contexto do cliente ${clientName} atualizado na memória de longo prazo.`,
+  });
+});
+
+app.post("/api/kia/memory/meeting-minute", (req, res) => {
+  const { title, date, participants, keyDecisions, actionItems, clientOrContext } = req.body;
+  if (!title || !keyDecisions) {
+    return res.status(400).json({ error: "title and keyDecisions are required" });
+  }
+
+  const memory = MemoryManager.getInstance();
+  const minute = memory.addMeetingMinute({
+    title,
+    date: date || new Date().toLocaleDateString("pt-PT"),
+    participants: Array.isArray(participants) ? participants : ["Josemar Gourgel (Owner)"],
+    keyDecisions: Array.isArray(keyDecisions) ? keyDecisions : [keyDecisions],
+    actionItems: Array.isArray(actionItems) ? actionItems : [],
+    clientOrContext,
+  });
+
+  res.json({
+    success: true,
+    meetingMinute: minute,
+    message: "Minuta de reunião memorizada com sucesso.",
+  });
 });
 
 

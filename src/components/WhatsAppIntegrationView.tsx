@@ -37,6 +37,7 @@ import {
 import { useApp } from "../context/AppContext";
 import { WhatsAppMessageLog } from "../types";
 import { AgentAvatar } from "./AgentAvatar";
+import { WhatsAppDeliverablesAndSessionsTab } from "./WhatsAppDeliverablesAndSessionsTab";
 
 export const WhatsAppIntegrationView: React.FC = () => {
   const {
@@ -55,7 +56,7 @@ export const WhatsAppIntegrationView: React.FC = () => {
     setActiveTab,
   } = useApp();
 
-  const [activeSubTab, setActiveSubTab] = useState<"live_feed" | "qr_free" | "config" | "routing" | "simulator">("live_feed");
+  const [activeSubTab, setActiveSubTab] = useState<"live_feed" | "deliverables_and_sessions" | "qr_free" | "config" | "routing" | "simulator">("live_feed");
   const [searchTerm, setSearchTerm] = useState("");
   const [filterSentiment, setFilterSentiment] = useState<string>("ALL");
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -308,6 +309,18 @@ export const WhatsAppIntegrationView: React.FC = () => {
           </button>
 
           <button
+            onClick={() => setActiveSubTab("deliverables_and_sessions")}
+            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
+              activeSubTab === "deliverables_and_sessions"
+                ? "bg-amber-500/20 text-amber-300 border border-amber-500/40 shadow-sm"
+                : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5 text-amber-400" />
+            <span>Entregáveis em AOA & Sessões</span>
+          </button>
+
+          <button
             onClick={() => setActiveSubTab("qr_free")}
             className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
               activeSubTab === "qr_free"
@@ -556,6 +569,13 @@ export const WhatsAppIntegrationView: React.FC = () => {
               })}
             </div>
           )}
+        </div>
+      )}
+
+      {/* SUB-TAB: DELIVERABLES & UNIFIED SESSIONS */}
+      {activeSubTab === "deliverables_and_sessions" && (
+        <div className="animate-fadeIn">
+          <WhatsAppDeliverablesAndSessionsTab />
         </div>
       )}
 
@@ -1374,6 +1394,86 @@ export const WhatsAppIntegrationView: React.FC = () => {
                 <span>
                   O endpoint <code>/api/whatsapp/webhook</code> já suporta resposta automática de challenge Meta standard e fallback instantâneo.
                 </span>
+              </div>
+            </div>
+
+            {/* Z-API / Make.com Webhook Integration Box */}
+            <div className="bg-[#090d16] rounded-3xl p-6 border border-amber-500/30 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-amber-400" />
+                  <span>Webhook Z-API & Make.com (Normalizado)</span>
+                </h3>
+                <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30 font-mono">
+                  Clean Mobile Text
+                </span>
+              </div>
+
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Para quem utiliza a <strong>Z-API</strong> ou fluxos no <strong>Make.com</strong>, a KIA processa as mensagens recebidas e converte tabelas e blocos Markdown automaticamente para texto limpo e legível no telemóvel:
+              </p>
+
+              <div className="space-y-2">
+                <label className="text-[11px] text-slate-400 font-medium">URL de Webhook da Z-API:</label>
+                <div className="flex items-center space-x-1 bg-slate-950 p-2 rounded-xl border border-slate-800 font-mono text-[10px] text-amber-300 break-all">
+                  <span className="flex-1">{typeof window !== "undefined" ? `${window.location.origin}/api/whatsapp/zapi-webhook` : "/api/whatsapp/zapi-webhook"}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(typeof window !== "undefined" ? `${window.location.origin}/api/whatsapp/zapi-webhook` : "/api/whatsapp/zapi-webhook", "zapi_wh")}
+                    className="p-1 text-slate-400 hover:text-white"
+                  >
+                    {copiedField === "zapi_wh" ? <Check className="w-3 h-3 text-amber-400" /> : <Copy className="w-3 h-3" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-300 space-y-1">
+                <div className="font-semibold text-amber-400">Recursos Ativos na Z-API:</div>
+                <ul className="list-disc list-inside space-y-0.5 text-slate-400">
+                  <li>Normalização automática de Markdown (tabelas ➔ marcadores)</li>
+                  <li>Sessão Unificada vinculada ao número de telefone</li>
+                  <li>Injeção de Memória de Longo Prazo e Regras do Owner</li>
+                </ul>
+              </div>
+            </div>
+
+            {/* Direct Make.com /api/whatsapp/message Router Box */}
+            <div className="bg-[#090d16] rounded-3xl p-6 border border-violet-500/30 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                  <Send className="w-4 h-4 text-violet-400" />
+                  <span>Webhook Make.com (/api/whatsapp/message)</span>
+                </h3>
+                <span className="text-[10px] px-2 py-0.5 rounded bg-violet-500/10 text-violet-300 border border-violet-500/30 font-mono">
+                  Make Hub Live
+                </span>
+              </div>
+
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Endpoint direto para encaminhamento de mensagens do WhatsApp para o fluxo da KIA na <strong>Make.com</strong>, com <strong>Normalizador de WhatsApp</strong> e <strong>Gerador de Documentos em AOA</strong> acoplados:
+              </p>
+
+              <div className="space-y-2">
+                <label className="text-[11px] text-slate-400 font-medium">URL do Endpoint (/api/whatsapp/message):</label>
+                <div className="flex items-center space-x-1 bg-slate-950 p-2 rounded-xl border border-slate-800 font-mono text-[10px] text-violet-300 break-all">
+                  <span className="flex-1">{typeof window !== "undefined" ? `${window.location.origin}/api/whatsapp/message` : "/api/whatsapp/message"}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(typeof window !== "undefined" ? `${window.location.origin}/api/whatsapp/message` : "/api/whatsapp/message", "make_direct_wh")}
+                    className="p-1 text-slate-400 hover:text-white"
+                  >
+                    {copiedField === "make_direct_wh" ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-300 space-y-1">
+                <div className="font-semibold text-violet-400">Fluxo Automático:</div>
+                <ul className="list-disc list-inside space-y-0.5 text-slate-400">
+                  <li>Destino Make: <code className="text-violet-300">hook.eu2.make.com/...</code></li>
+                  <li>Limpeza de tabelas e formatação para ecrãs móveis</li>
+                  <li>Geração de Propostas em Kwanzas com 50% de sinal</li>
+                </ul>
               </div>
             </div>
           </div>

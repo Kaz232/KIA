@@ -99,6 +99,7 @@ interface AppContextType {
   events: CalendarEvent[];
   auditLogs: AuditLog[];
   chatMessages: ChatMessage[];
+  setChatMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
   systemSettings: SystemSettings;
   showSynergyTour: boolean;
   setShowSynergyTour: (show: boolean) => void;
@@ -117,6 +118,7 @@ interface AppContextType {
 
   // KIA & Execution Actions
   isKiaThinking: boolean;
+  setIsKiaThinking: React.Dispatch<React.SetStateAction<boolean>>;
   sendKiaMessage: (text: string, attachments?: any[]) => Promise<void>;
   clearChat: () => void;
 
@@ -2657,8 +2659,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         isKazaModalOpen,
         setIsKazaModalOpen,
         isKiaThinking,
+        setIsKiaThinking,
         sendKiaMessage,
         clearChat,
+        setChatMessages,
         executeGlobalSynergy,
         analyzeFinancialRAG,
         simulateScenario,

@@ -66,6 +66,11 @@ export interface ChatMessage {
   suggestedPrompts?: string[];
   modelName?: string;
   isStreaming?: boolean;
+  chunksCount?: number;
+  combinedContinuations?: number;
+  isTruncated?: boolean;
+  isComplete?: boolean;
+  finishReason?: string;
 }
 
 export type KnowledgeStatus = "DRAFT" | "REVIEW_REQUIRED" | "APPROVED" | "ARCHIVED";

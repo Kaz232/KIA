@@ -19,18 +19,23 @@ import {
   ArrowRight,
   Copy,
   Check,
+  Square,
+  Layers,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { KiaTamagotchiCompanion } from "./KiaTamagotchiCompanion";
 import { wakeWordDetector } from "../utils/wakeWordDetector";
 import { stopTtsAudio, playSfx, getIsSpeaking, speakNaturalText } from "../utils/audio";
-import { ChatAttachment } from "../types";
+import { ChatAttachment, ChatMessage } from "../types";
+import { validateResponseCompleteness } from "../services/kiaRobustChat";
 
 export const KiaChatView: React.FC = () => {
   const {
     chatMessages,
+    setChatMessages,
     sendKiaMessage,
     isKiaThinking,
+    setIsKiaThinking,
     supabaseHealth,
     refreshSupabaseHealth,
     systemSettings,
@@ -40,6 +45,15 @@ export const KiaChatView: React.FC = () => {
     setIsSynergyModalOpen,
     setIsScenarioModalOpen,
     setIsKazaModalOpen,
+    createTask,
+    executeGlobalSynergy,
+    currentUser,
+    activeRole,
+    tasks,
+    knowledge,
+    agents,
+    scannedDocs,
+    showQuotaToast,
   } = useApp();
 
   const [inputText, setInputText] = useState("");
@@ -55,6 +69,23 @@ export const KiaChatView: React.FC = () => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
 
+  // Streaming & Token Limit Prevention State
+  const [isStreamingLive, setIsStreamingLive] = useState(false);
+  const [streamingMsgId, setStreamingMsgId] = useState<string | null>(null);
+  const [streamProgress, setStreamProgress] = useState<{
+    chunksReceived: number;
+    charactersReceived: number;
+    continuationCount: number;
+    statusText: string;
+    modelUsed?: string;
+  }>({
+    chunksReceived: 0,
+    charactersReceived: 0,
+    continuationCount: 0,
+    statusText: "",
+  });
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const recognitionRef = useRef<any>(null);
@@ -68,8 +99,17 @@ export const KiaChatView: React.FC = () => {
   const attachmentsRef = useRef(attachments);
   const systemSettingsRef = useRef(systemSettings);
 
-  const isProcessing = isKiaThinking;
+  const isProcessing = isKiaThinking || isStreamingLive;
   const isBackendConnected = supabaseHealth.isConnected;
+
+  // Cleanup active stream on unmount
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
 
   // Keep mutable refs in sync with latest state
   useEffect(() => {
@@ -273,9 +313,9 @@ export const KiaChatView: React.FC = () => {
     setAttachments([]);
 
     try {
-      await sendKiaMessage(cleanText, currentAttachments);
+      await handleStreamSend(cleanText, currentAttachments);
     } catch (err) {
-      console.error("Erro ao executar comando de voz:", err);
+      console.error("Erro ao executar comando de voz com stream:", err);
     } finally {
       autoSentRef.current = false;
       if (!getIsSpeaking() && !isSpeakingLiveRef.current) {
@@ -526,6 +566,350 @@ export const KiaChatView: React.FC = () => {
     }
   };
 
+  /**
+   * Stream-Handling Engine in KiaChatView:
+   * - Receives Gemini response chunks progressively via ReadableStream / TextDecoder
+   * - Combines chunks in real-time into the assistant message bubble
+   * - Checks completeness and detects token limit cutoff / truncation
+   * - Automatically triggers continuation stream requests to stitch chunks seamlessly without truncation
+   */
+  const handleStreamSend = async (
+    text: string,
+    currentAttachments: ChatAttachment[] = [],
+    continueExistingMsgId?: string,
+    baseContent?: string
+  ) => {
+    const cleanText = text.trim();
+    if (
+      (!cleanText && currentAttachments.length === 0 && !continueExistingMsgId) ||
+      isStreamingLive ||
+      isKiaThinking
+    ) {
+      return;
+    }
+
+    stopTtsAudio();
+    playSfx("action", 0.3);
+    wakeWordDetector.setMutedForPlayback(true);
+
+    let assistantMsgId = continueExistingMsgId;
+    let accumulatedContent = baseContent || "";
+
+    if (!continueExistingMsgId) {
+      const userMsgId = `msg-user-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+      const userMsg: ChatMessage = {
+        id: userMsgId,
+        role: "user",
+        content: cleanText,
+        timestamp: new Date().toISOString(),
+        attachments: currentAttachments,
+      };
+
+      assistantMsgId = `msg-asst-${Date.now() + 1}-${Math.random().toString(36).slice(2, 6)}`;
+      const initialAssistantMsg: ChatMessage = {
+        id: assistantMsgId,
+        role: "assistant",
+        content: "",
+        timestamp: new Date().toISOString(),
+        intent: "conversation",
+        isStreaming: true,
+        chunksCount: 0,
+        combinedContinuations: 0,
+      };
+
+      setChatMessages((prev) => [...prev, userMsg, initialAssistantMsg]);
+    } else {
+      setChatMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMsgId
+            ? { ...m, isStreaming: true, isTruncated: false }
+            : m
+        )
+      );
+    }
+
+    setIsStreamingLive(true);
+    setIsKiaThinking(true);
+    setStreamingMsgId(assistantMsgId!);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    let totalChunksReceived = 0;
+    let continuationAttempts = 0;
+    const maxContinuations = 3;
+    let lastDoneData: any = null;
+    let lastUsedModel = "gemini-3.7-flash";
+
+    setStreamProgress({
+      chunksReceived: 0,
+      charactersReceived: accumulatedContent.length,
+      continuationCount: 0,
+      statusText: "A estabelecer ligação de stream com a API Gemini...",
+    });
+
+    try {
+      while (continuationAttempts <= maxContinuations && !controller.signal.aborted) {
+        const isInitialPass = continuationAttempts === 0 && !continueExistingMsgId;
+
+        let queryMessage = cleanText;
+        let queryHistory = chatMessages.slice(-10).map((m) => ({
+          role: m.role,
+          content: m.content,
+        }));
+
+        if (!isInitialPass) {
+          // Token limit prevention: seamlessly prompt Gemini to continue from the last sentence
+          const tailSnippet = accumulatedContent.slice(-260);
+          queryMessage = `Continua exatamente a partir do seguinte ponto sem repetir o que já foi dito, completando a análise com todas as secções em falta:\n"...${tailSnippet}"`;
+          queryHistory = [
+            ...queryHistory,
+            { role: "user", content: cleanText || "Continua a análise detalhada." },
+            { role: "assistant", content: accumulatedContent },
+          ];
+        }
+
+        setStreamProgress((prev) => ({
+          ...prev,
+          continuationCount: continuationAttempts,
+          statusText:
+            continuationAttempts === 0
+              ? "A receber fragmentos em tempo real da API Gemini..."
+              : `A expandir limite de tokens: a receber continuação #${continuationAttempts + 1} sem cortes...`,
+        }));
+
+        let passSucceeded = false;
+        let passDonePayload: any = null;
+
+        try {
+          const response = await fetch("/api/kia/stream", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              message: queryMessage,
+              history: queryHistory,
+              userRole: activeRole,
+              userName: currentUser.name,
+              maxOutputTokens: 4096,
+              contextData: {
+                tasksCount: tasks.length,
+                knowledgeCount: knowledge.length,
+                agentsCount: agents.length,
+                docsCount: scannedDocs.length,
+              },
+            }),
+            signal: controller.signal,
+          });
+
+          if (response.ok && response.body) {
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+
+            while (true) {
+              const { value, done } = await reader.read();
+              if (done) break;
+
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split("\n\n");
+              buffer = lines.pop() || "";
+
+              for (const line of lines) {
+                if (line.startsWith("data: ")) {
+                  try {
+                    const payload = JSON.parse(line.slice(6));
+                    if (payload.type === "chunk" && payload.text) {
+                      totalChunksReceived++;
+                      accumulatedContent += payload.text;
+
+                      setStreamProgress((prev) => ({
+                        ...prev,
+                        chunksReceived: totalChunksReceived,
+                        charactersReceived: accumulatedContent.length,
+                        modelUsed: payload.modelName || prev.modelUsed,
+                      }));
+
+                      // Combine chunks onto the assistant message in real time
+                      setChatMessages((prev) =>
+                        prev.map((m) =>
+                          m.id === assistantMsgId
+                            ? {
+                                ...m,
+                                content: accumulatedContent,
+                                isStreaming: true,
+                                chunksCount: totalChunksReceived,
+                                combinedContinuations: continuationAttempts,
+                              }
+                            : m
+                        )
+                      );
+                    } else if (payload.type === "done") {
+                      passDonePayload = payload;
+                      lastDoneData = payload;
+                      if (payload.modelName) lastUsedModel = payload.modelName;
+                    }
+                  } catch {
+                    // Ignore partial chunk parse fragments
+                  }
+                }
+              }
+            }
+            passSucceeded = true;
+          } else {
+            throw new Error(`Stream HTTP ${response.status}`);
+          }
+        } catch (streamErr: any) {
+          if (controller.signal.aborted) break;
+          console.warn("Stream error encountered, attempting fallback:", streamErr);
+
+          const errStr = streamErr?.message || "";
+          if (
+            errStr.includes("429") ||
+            errStr.includes("Quota exceeded") ||
+            errStr.includes("RESOURCE_EXHAUSTED")
+          ) {
+            showQuotaToast();
+          }
+
+          // Robust fallback via /api/kia/chat
+          try {
+            const fallbackRes = await fetch("/api/kia/chat", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                message: queryMessage,
+                history: queryHistory,
+                userRole: activeRole,
+                userName: currentUser.name,
+                maxOutputTokens: 4096,
+                contextData: {
+                  tasksCount: tasks.length,
+                  knowledgeCount: knowledge.length,
+                  agentsCount: agents.length,
+                  docsCount: scannedDocs.length,
+                },
+              }),
+              signal: controller.signal,
+            });
+
+            if (fallbackRes.ok) {
+              const fallbackJson = await fallbackRes.json();
+              passDonePayload = fallbackJson;
+              lastDoneData = fallbackJson;
+              if (fallbackJson.content) {
+                totalChunksReceived++;
+                accumulatedContent = accumulatedContent
+                  ? `${accumulatedContent.trimEnd()}\n\n${fallbackJson.content.trimStart()}`
+                  : fallbackJson.content;
+
+                setChatMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantMsgId
+                      ? {
+                          ...m,
+                          content: accumulatedContent,
+                          isStreaming: true,
+                          chunksCount: totalChunksReceived,
+                          combinedContinuations: continuationAttempts,
+                        }
+                      : m
+                  )
+                );
+                passSucceeded = true;
+              }
+            }
+          } catch (fbErr) {
+            console.error("Robust fallback also failed:", fbErr);
+          }
+        }
+
+        // Validate response completeness to detect if Gemini hit token limits
+        const validation = validateResponseCompleteness(
+          accumulatedContent,
+          passDonePayload?.finishReason,
+          passDonePayload?.isTruncated
+        );
+
+        const isTruncated =
+          passDonePayload?.finishReason === "MAX_TOKENS" ||
+          passDonePayload?.isTruncated === true ||
+          !validation.isComplete;
+
+        if (isTruncated && continuationAttempts < maxContinuations && passSucceeded) {
+          continuationAttempts++;
+          setStreamProgress((prev) => ({
+            ...prev,
+            continuationCount: continuationAttempts,
+            statusText: `Limite de tokens atingido. A combinar fragmentos adicionais (tentativa #${continuationAttempts + 1})...`,
+          }));
+          await new Promise((r) => setTimeout(r, 450));
+        } else {
+          break;
+        }
+      }
+    } finally {
+      const finalValidation = validateResponseCompleteness(
+        accumulatedContent,
+        lastDoneData?.finishReason,
+        lastDoneData?.isTruncated
+      );
+
+      setChatMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMsgId
+            ? {
+                ...m,
+                content:
+                  accumulatedContent ||
+                  "Resposta processada. Se necessário, solicita continuidade.",
+                isStreaming: false,
+                chunksCount: totalChunksReceived,
+                combinedContinuations: continuationAttempts,
+                isTruncated: !finalValidation.isComplete,
+                isComplete: finalValidation.isComplete,
+                finishReason: lastDoneData?.finishReason || "STOP",
+                modelName: lastUsedModel,
+                executionResult: lastDoneData,
+              }
+            : m
+        )
+      );
+
+      // Execute automated actions if payload present
+      if (lastDoneData?.actionPayload?.type === "navigate") {
+        setActiveTab(lastDoneData.actionPayload.target);
+      } else if (lastDoneData?.actionPayload?.type === "open_modal") {
+        if (lastDoneData.actionPayload.modal === "synergy") setIsSynergyModalOpen(true);
+        if (lastDoneData.actionPayload.modal === "scenario") setIsScenarioModalOpen(true);
+        if (lastDoneData.actionPayload.modal === "kaza") setIsKazaModalOpen(true);
+      }
+
+      // Handle TTS if configured
+      if (!ttsMuted && systemSettings.autoAudioTts && accumulatedContent) {
+        speakNaturalText(accumulatedContent, {
+          voiceName: systemSettings.voiceName || "Kore",
+          engine: "auto",
+        });
+      }
+
+      setIsStreamingLive(false);
+      setIsKiaThinking(false);
+      setStreamingMsgId(null);
+      abortControllerRef.current = null;
+
+      if (!getIsSpeaking() && !isSpeakingLiveRef.current) {
+        wakeWordDetector.setMutedForPlayback(false);
+      }
+    }
+  };
+
+  const handleContinueResponse = async (msgId: string, currentContent: string) => {
+    const parentMsg = chatMessages.find((m) => m.id === msgId);
+    if (!parentMsg || isStreamingLive || isKiaThinking) return;
+
+    await handleStreamSend("", [], msgId, currentContent);
+  };
+
   const handleManualSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const text = inputText.trim();
@@ -535,17 +919,7 @@ export const KiaChatView: React.FC = () => {
     const currentAttachments = [...attachments];
     setAttachments([]);
 
-    stopTtsAudio();
-    playSfx("action", 0.3);
-
-    wakeWordDetector.setMutedForPlayback(true);
-    try {
-      await sendKiaMessage(text, currentAttachments);
-    } finally {
-      if (!getIsSpeaking() && !isSpeakingLiveRef.current) {
-        wakeWordDetector.setMutedForPlayback(false);
-      }
-    }
+    await handleStreamSend(text, currentAttachments);
   };
 
   // Upload de ficheiros
@@ -713,7 +1087,60 @@ export const KiaChatView: React.FC = () => {
                     </button>
                   </div>
 
-                  <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                  <p className="whitespace-pre-wrap break-words">
+                    {msg.content}
+                    {msg.isStreaming && (
+                      <span className="inline-block w-1.5 h-4 ml-1 bg-amber-400 animate-pulse align-middle" />
+                    )}
+                  </p>
+
+                  {/* Real-time Streaming chunk & continuation status banner */}
+                  {msg.isStreaming && (
+                    <div className="mt-2.5 pt-2 border-t border-slate-800 flex flex-wrap items-center gap-2 text-xs text-amber-300 animate-fadeIn">
+                      <Sparkles className="w-3.5 h-3.5 animate-spin text-amber-400 shrink-0" />
+                      <span className="font-medium text-[11px] sm:text-xs">
+                        {streamProgress.statusText || "A receber fragmentos em tempo real da API Gemini..."}
+                      </span>
+                      <span className="text-[10px] text-slate-400 bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700 font-mono">
+                        {msg.chunksCount || streamProgress.chunksReceived || 1} fragmentos • {(msg.content || "").length} caracteres
+                      </span>
+                      {msg.combinedContinuations && msg.combinedContinuations > 0 ? (
+                        <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1.5 py-0.5 rounded font-bold">
+                          +{msg.combinedContinuations} continuação(ões) combinada(s)
+                        </span>
+                      ) : null}
+                    </div>
+                  )}
+
+                  {/* Completed Long Response badge (when streaming is finished and combined multiple parts) */}
+                  {!msg.isStreaming && !isUser && msg.combinedContinuations && msg.combinedContinuations > 0 && (
+                    <div className="mt-2 pt-1.5 flex items-center gap-1.5 text-[11px] text-emerald-400 font-medium">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      <span>
+                        Resposta longa combinada com sucesso ({msg.chunksCount || 1} fragmentos recebidos sem cortes por limite de tokens)
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Truncation continuation button (if response was cut or user wants to stream next chunk) */}
+                  {!msg.isStreaming && !isUser && (msg.isTruncated || ((msg.content || "").length > 450 && !msg.content.trim().endsWith("."))) && (
+                    <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex items-center justify-between gap-2 flex-wrap">
+                      <button
+                        onClick={() => handleContinueResponse(msg.id, msg.content)}
+                        disabled={isProcessing}
+                        className="flex items-center gap-1.5 text-xs text-amber-400 hover:text-amber-300 font-medium bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 px-2.5 py-1 rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
+                        title="Continuar a gerar resposta a partir deste ponto em novos fragmentos combinados"
+                      >
+                        <Sparkles className="w-3 h-3 text-amber-400" />
+                        <span>Continuar resposta (gerar próximos fragmentos sem corte)</span>
+                      </button>
+                      {msg.chunksCount && msg.chunksCount > 1 && (
+                        <span className="text-[10px] text-slate-500 font-mono">
+                          {msg.chunksCount} fragmentos combinados
+                        </span>
+                      )}
+                    </div>
+                  )}
 
                   {/* Render Action Result Cards if present */}
                   {msg.executionResult && msg.executionResult.actionCard && (
@@ -778,8 +1205,8 @@ export const KiaChatView: React.FC = () => {
           </div>
         )}
 
-        {/* Indicador de Processamento / KIA Thinking */}
-        {isProcessing && (
+        {/* Indicador de Processamento / KIA Thinking (apenas se não houver mensagem streaming ativa) */}
+        {isProcessing && !streamingMsgId && (
           <div className="flex flex-col items-start animate-fadeIn">
             <div className="rounded-2xl px-4 py-3 bg-slate-900 border border-amber-500/30 text-amber-300 rounded-bl-none flex items-center space-x-2 text-sm shadow-md">
               <Sparkles className="w-4 h-4 animate-spin text-amber-400" />
@@ -810,7 +1237,7 @@ export const KiaChatView: React.FC = () => {
               type="button"
               onClick={() => {
                 setInputText(chip.prompt);
-                void sendKiaMessage(chip.prompt, []);
+                void handleStreamSend(chip.prompt, []);
               }}
               disabled={isProcessing}
               className="px-2.5 py-1 rounded-lg bg-slate-800/90 hover:bg-slate-700/90 border border-slate-700/70 text-[11px] text-slate-300 hover:text-amber-300 font-medium whitespace-nowrap transition-colors shrink-0 cursor-pointer disabled:opacity-40"
@@ -889,6 +1316,25 @@ export const KiaChatView: React.FC = () => {
           >
             {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
           </button>
+
+          {isStreamingLive && (
+            <button
+              type="button"
+              onClick={() => {
+                if (abortControllerRef.current) {
+                  abortControllerRef.current.abort();
+                }
+                setIsStreamingLive(false);
+                setIsKiaThinking(false);
+                setStreamingMsgId(null);
+              }}
+              className="p-3 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 rounded-xl transition-all flex items-center gap-1.5 text-xs font-semibold shrink-0 cursor-pointer shadow-sm"
+              title="Interromper geração de fluxo atual"
+            >
+              <Square className="w-4 h-4 fill-current" />
+              <span className="hidden sm:inline">Parar</span>
+            </button>
+          )}
 
           <button
             type="submit"

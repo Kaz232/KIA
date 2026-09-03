@@ -17,11 +17,19 @@ import {
   Layers,
   ChevronRight,
   Zap,
+  Download,
+  RotateCw,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { Agent, AgentStatus } from "../types";
 import { AgentAvatar, getAgentVisualMetadata } from "./AgentAvatar";
 import { AgentEditModal } from "./AgentEditModal";
+import { downloadAgentsCsv } from "../utils/agentsCsvExport";
+import { useAgentHeartbeats } from "../hooks/useAgentHeartbeats";
+import {
+  AgentHeartbeatIndicator,
+  AgentHeartbeatMonitorCard,
+} from "./AgentHeartbeatIndicator";
 
 export const AgentsView: React.FC = () => {
   const {
@@ -35,10 +43,34 @@ export const AgentsView: React.FC = () => {
     sendKiaMessage,
     setShowSynergyTour,
     triggerAgentSynergyExecution,
+    playSfx,
   } = useApp();
 
   const [selectedAgent, setSelectedAgent] = useState<Agent>(agents[0] || null);
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
+  const [downloadSuccess, setDownloadSuccess] = useState(false);
+
+  // Live polling of endpoints for each agent
+  const {
+    heartbeats,
+    isRefreshing,
+    pollAllAgents,
+    pollAgent,
+    simulateAgentHeartbeat,
+    autoRestartEnabled,
+    setAutoRestartEnabled,
+    restartAgent,
+    recoveryLogs,
+    summary,
+  } = useAgentHeartbeats(agents);
+
+  const handleExportAgentsCSV = () => {
+    if (!agents || agents.length === 0) return;
+    downloadAgentsCsv(agents, skills);
+    playSfx?.("success");
+    setDownloadSuccess(true);
+    setTimeout(() => setDownloadSuccess(false), 3500);
+  };
 
   const handleTestAgentInKia = (agent: Agent) => {
     setActiveTab("kia");
@@ -68,6 +100,52 @@ export const AgentsView: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          {/* Live Heartbeat Polling Status Pill */}
+          <div className="flex items-center space-x-2.5 px-3 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs shadow-inner">
+            <div className="flex items-center space-x-1.5" title="Agentes com endpoint ativo e saudável (pulso verde)">
+              <span className="relative flex h-2 w-2 items-center justify-center">
+                <span className="absolute inline-flex h-full w-full rounded-full opacity-75 animate-ping bg-emerald-400" />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.7)]" />
+              </span>
+              <span className="text-emerald-300 font-mono font-bold text-[11px]">
+                {summary.active} Ativos
+              </span>
+            </div>
+
+            {summary.high_latency > 0 && (
+              <div className="flex items-center space-x-1.5 pl-2 border-l border-slate-800" title="Agentes com alta latência > 250ms (pulso âmbar)">
+                <span className="relative flex h-2 w-2 items-center justify-center">
+                  <span className="absolute inline-flex h-full w-full rounded-full opacity-75 animate-ping bg-amber-400" />
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.7)]" />
+                </span>
+                <span className="text-amber-300 font-mono font-bold text-[11px]">
+                  {summary.high_latency} Lentos
+                </span>
+              </div>
+            )}
+
+            {summary.failing > 0 && (
+              <div className="flex items-center space-x-1.5 pl-2 border-l border-slate-800" title="Agentes com falha no endpoint (pulso vermelho)">
+                <span className="relative flex h-2 w-2 items-center justify-center">
+                  <span className="absolute inline-flex h-full w-full rounded-full opacity-75 animate-ping bg-rose-400" />
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.8)]" />
+                </span>
+                <span className="text-rose-300 font-mono font-bold text-[11px]">
+                  {summary.failing} Falhas
+                </span>
+              </div>
+            )}
+
+            <button
+              onClick={pollAllAgents}
+              disabled={isRefreshing}
+              className="p-1 rounded-lg text-slate-400 hover:text-amber-400 hover:bg-slate-900 transition-colors disabled:opacity-50 ml-0.5"
+              title="Sondar endpoints de todos os agentes agora"
+            >
+              <RotateCw className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin text-amber-400" : ""}`} />
+            </button>
+          </div>
+
           {/* Tour Button */}
           <button
             onClick={() => setShowSynergyTour(true)}
@@ -101,6 +179,26 @@ export const AgentsView: React.FC = () => {
           >
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
             <span>Ativar Todos</span>
+          </button>
+
+          {/* Export CSV Button */}
+          <button
+            id="btn-export-agents-csv"
+            onClick={handleExportAgentsCSV}
+            className="flex items-center space-x-1.5 px-3.5 py-2.5 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 text-blue-300 font-bold text-xs rounded-xl shadow-md transition-all active:scale-95 hover:border-blue-400"
+            title="Descarregar ficheiro CSV com a lista completa de agentes e respetivos status"
+          >
+            {downloadSuccess ? (
+              <>
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                <span className="text-emerald-300 font-semibold">CSV Descarregado!</span>
+              </>
+            ) : (
+              <>
+                <Download className="w-4 h-4 text-blue-400" />
+                <span>Exportar CSV</span>
+              </>
+            )}
           </button>
 
           <button
@@ -151,19 +249,28 @@ export const AgentsView: React.FC = () => {
                     </div>
                   </div>
 
-                  <span
-                    className={`text-[9px] px-2 py-0.5 rounded font-bold uppercase ${
-                      agent.status === "ACTIVE"
-                        ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
-                        : agent.status === "DRAFT"
-                        ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30"
-                        : agent.status === "REVIEW_REQUIRED"
-                        ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
-                        : "bg-slate-800 text-slate-400"
-                    }`}
-                  >
-                    {agent.status}
-                  </span>
+                  <div className="flex flex-col items-end gap-1.5 shrink-0">
+                    <span
+                      className={`text-[9px] px-2 py-0.5 rounded font-bold uppercase ${
+                        agent.status === "ACTIVE"
+                          ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                          : agent.status === "DRAFT"
+                          ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30"
+                          : agent.status === "REVIEW_REQUIRED"
+                          ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                          : "bg-slate-800 text-slate-400"
+                      }`}
+                    >
+                      {agent.status}
+                    </span>
+
+                    {/* Heartbeat pulse indicator (Green: active, Amber: high latency, Red: failing) */}
+                    <AgentHeartbeatIndicator
+                      heartbeat={heartbeats[agent.id]}
+                      variant="compact"
+                      showLatency={true}
+                    />
+                  </div>
                 </div>
 
                 <p className="text-[11px] text-slate-400 mt-2.5 line-clamp-2 leading-relaxed">
@@ -193,11 +300,16 @@ export const AgentsView: React.FC = () => {
                     showBadge={true}
                   />
                   <div>
-                    <div className="flex items-center space-x-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <h2 className="text-lg font-black text-white">{selectedAgent.name}</h2>
                       <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-amber-400">
                         {selectedAgent.slug}
                       </span>
+                      {/* Heartbeat status badge in profile header */}
+                      <AgentHeartbeatIndicator
+                        heartbeat={heartbeats[selectedAgent.id]}
+                        variant="badge"
+                      />
                     </div>
                     <p className="text-xs text-amber-300/90 font-semibold">{selectedAgent.roleTitle}</p>
                     <p className="text-[11px] text-slate-400 mt-0.5">Versão: v{selectedAgent.version} • Criado em {new Date(selectedAgent.createdAt).toLocaleDateString("pt-PT")}</p>
@@ -253,6 +365,18 @@ export const AgentsView: React.FC = () => {
                   )}
                 </div>
               </div>
+
+              {/* Endpoint Heartbeat Live Telemetry & Simulation Controls */}
+              <AgentHeartbeatMonitorCard
+                agentId={selectedAgent.id}
+                agentName={selectedAgent.name}
+                heartbeat={heartbeats[selectedAgent.id]}
+                onRefresh={() => pollAgent(selectedAgent.id)}
+                onSimulate={(mode) => simulateAgentHeartbeat(selectedAgent.id, mode)}
+                onRestart={() => restartAgent(selectedAgent.id)}
+                autoRestartEnabled={autoRestartEnabled}
+                onToggleAutoRestart={setAutoRestartEnabled}
+              />
 
               {/* Objective & Description */}
               <div className="space-y-4">
