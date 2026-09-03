@@ -75,6 +75,7 @@ export const KnowledgeBaseView: React.FC = () => {
     createTask({
       title: `Aplicar: ${item.title}`,
       description: `Execução baseada no artigo de conhecimento: "${item.title}".\n\nResumo:\n${item.content.slice(0, 200)}...`,
+      status: "TODO",
       priority: "HIGH",
       category: "DESIGN",
       tags: ["knowledge", ...item.tags],

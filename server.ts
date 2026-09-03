@@ -24,13 +24,60 @@ app.use("/api/engine", engineRouter);
 app.use("/api/registry", registryRouter);
 
 // Initialize Google GenAI client
-function getGenAI(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
+function extractCleanApiKey(raw?: string): string | null {
+  if (!raw || typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (trimmed === "" || trimmed === "MY_GEMINI_API_KEY" || trimmed === "dummy_key") return null;
+  
+  // If it's already a clean API key (no spaces, length >= 20)
+  if (!trimmed.includes(" ") && !trimmed.includes("\n") && trimmed.length >= 20) {
+    return trimmed;
+  }
+  
+  // Extract standard AIza... API keys
+  const aizaMatch = trimmed.match(/AIza[0-9A-Za-z-_]{35}/);
+  if (aizaMatch) return aizaMatch[0];
+
+  // Extract AQ... API keys (Google Cloud GenAI key format)
+  const aqMatch = trimmed.match(/AQ\.[0-9A-Za-z._-]{30,}/);
+  if (aqMatch) return aqMatch[0];
+
+  // Look for "Chave de API <key>" or "API Key <key>"
+  const keyLabelMatch = trimmed.match(/(?:Chave de API|API Key|ApiKey)[\s:]+([A-Za-z0-9._-]{25,})/i);
+  if (keyLabelMatch && keyLabelMatch[1]) {
+    return keyLabelMatch[1].trim();
+  }
+
+  return null;
+}
+
+function getGeminiApiKey(): string | null {
+  const sources = [
+    process.env.GEMINI_API_KEY,
+    process.env.GOOGLE_API_KEY,
+    process.env.API_KEY,
+    process.env.AI_PROVIDER,
+    process.env.AI_MODEL,
+  ];
+
+  for (const src of sources) {
+    const key = extractCleanApiKey(src);
+    if (key) return key;
+  }
+  return null;
+}
+
+function hasValidGeminiKey(): boolean {
+  return getGeminiApiKey() !== null;
+}
+
+function getGenAI(): GoogleGenAI | null {
+  const apiKey = getGeminiApiKey();
   if (!apiKey) {
-    console.warn("WARNING: GEMINI_API_KEY environment variable is not set.");
+    return null;
   }
   return new GoogleGenAI({
-    apiKey: apiKey || "",
+    apiKey,
     httpOptions: {
       headers: {
         "User-Agent": "gag-core-os",
@@ -41,7 +88,7 @@ function getGenAI(): GoogleGenAI {
 
 // Resilient generation with automatic fallback & low-latency execution timeout
 function sanitizeModelName(modelName?: string): string {
-  if (!modelName) return "gemini-3.7-flash";
+  if (!modelName) return "gemini-3.1-flash-lite";
   const m = modelName.trim().toLowerCase();
   if (
     m.includes("1.5") ||
@@ -49,54 +96,74 @@ function sanitizeModelName(modelName?: string): string {
     m.includes("2.5-pro") ||
     m.includes("2.0") ||
     m === "gemini-pro" ||
-    m === "gemini-ultra"
+    m === "gemini-ultra" ||
+    m.includes("3.7-flash")
   ) {
-    return "gemini-3.7-flash";
+    return "gemini-3.1-flash-lite";
   }
   return modelName;
 }
 
 async function generateWithFallback(
-  ai: GoogleGenAI,
+  ai: GoogleGenAI | null,
   primaryModel: string,
   contents: any,
   config?: any
 ): Promise<{ response: any; usedModel: string }> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || apiKey.trim() === "" || apiKey === "dummy_key") {
+  if (!ai || !hasValidGeminiKey()) {
     throw new Error("GEMINI_API_KEY_UNCONFIGURED");
   }
 
-  // Modern high-availability models prioritized for real-time responsiveness without 0-quota limits
+  // Modern high-availability models prioritized for real-time responsiveness
   const sanitizedPrimary = sanitizeModelName(primaryModel);
   const candidateModels = [
     sanitizedPrimary,
-    "gemini-3.7-flash",
     "gemini-3.1-flash-lite",
+    "gemini-flash-latest",
+    "gemini-3.7-flash",
   ];
   const uniqueModels = Array.from(new Set(candidateModels.filter(Boolean)));
 
   let lastError: any = null;
   for (const model of uniqueModels) {
+    let timer: NodeJS.Timeout | null = null;
     try {
-      // 15000ms timeout per model attempt to guarantee resilience
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`Timeout on model ${model}`)), 15000)
-      );
+      // 8000ms timeout per model attempt to guarantee fast fallback without blocking
+      const timeoutPromise = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Timeout de 8000ms excedido para ${model}`)), 8000);
+      });
 
       const generatePromise = ai.models.generateContent({
         model,
         contents,
         config: {
+          thinkingConfig: {
+            thinkingBudget: 0,
+          },
           ...config,
         },
       });
 
       const response: any = await Promise.race([generatePromise, timeoutPromise]);
+      if (timer) clearTimeout(timer);
       return { response, usedModel: model };
     } catch (err: any) {
+      if (timer) clearTimeout(timer);
       lastError = err;
-      console.warn(`Model ${model} fallback (${err?.status || err?.message || err}). Switching to next model...`);
+      const errorMsg = err?.message || String(err);
+      console.warn(`Model ${model} fallback (${err?.status || errorMsg}).`);
+      
+      // If the error is an authentication / permission error (403), stop attempting other models
+      if (
+        err?.status === 403 ||
+        errorMsg.includes("403") ||
+        errorMsg.includes("PERMISSION_DENIED") ||
+        errorMsg.includes("unregistered callers") ||
+        errorMsg.includes("API_KEY_INVALID")
+      ) {
+        console.warn("Gemini API key is unconfigured or invalid (403 Forbidden). Halting further model attempts.");
+        break;
+      }
     }
   }
   throw lastError;
@@ -120,11 +187,10 @@ function synthesizeLocalKiaResponse(message: string, userName = "Josemar Gourgel
     msg.includes("opções de serviço") ||
     msg.includes("conteudo que converte") ||
     msg.includes("conteúdo que converte") ||
-    msg.includes("obrigado pelo retorno") ||
     (msg.includes("proposta") && (msg.includes("preco") || msg.includes("preço") || msg.includes("servico") || msg.includes("serviço") || msg.includes("anda")))
   ) {
     return {
-      content: `Excelente abordagem comercial para a Jussara da ANDA, ${userName}!\n\nA tua mensagem está muito direta, empática e com foco nos resultados do cliente. Para as 3 opções de serviço que mencionaste na mensagem, estruturei esta proposta pronta em Kwanzas (AOA):\n\n1. **Opção 1 — Pacote Presença & Vídeos:** 4 Vídeos Promocionais (Reels/Shorts) + Roteiros persuasivos de conversão — **180.000 AOA**\n2. **Opção 2 — Pacote Tração & Tráfego:** 8 Vídeos Promocionais + Gestão de Campanhas Meta Ads para Luanda — **350.000 AOA**\n3. **Opção 3 — Pacote Domínio Visual 360:** Identidade de Campanha, 12 Vídeos, Design Estratégico e Tráfego Integrado — **600.000 AOA**\n\nDesejas que eu crie agora a ordem de trabalho no Backlog para o Copywriter e o Diretor de Arte gerarem a apresentação final da proposta?`,
+      content: `Excelente abordagem comercial para a Jussara da ANDA, ${userName}!\n\nA tua mensagem tem clareza e foco na geração de valor. Para as 3 opções de serviço mencionadas, estruturei esta proposta estratégica em Kwanzas (AOA):\n\n1. **Opção 1 — Pacote Presença & Vídeos:** 4 Vídeos Promocionais (Reels/Shorts) + Roteiros persuasivos de conversão — **180.000 AOA**\n2. **Opção 2 — Pacote Tração & Tráfego:** 8 Vídeos Promocionais + Gestão de Campanhas Meta Ads para Luanda — **350.000 AOA**\n3. **Opção 3 — Pacote Domínio Visual 360:** Identidade de Campanha, 12 Vídeos, Design Estratégico e Tráfego Integrado — **600.000 AOA**\n\nDesejas que eu crie uma tarefa no Backlog para a equipa gerar o PDF executivo da proposta?`,
       intent: "conversation",
       capability: "conversation:chat",
       executionStatus: "SUCCESS",
@@ -157,10 +223,10 @@ function synthesizeLocalKiaResponse(message: string, userName = "Josemar Gourgel
   }
 
   // 2. Task Creation Intent
-  if (msg.includes("tarefa") || msg.includes("criar tarefa") || msg.includes("task") || msg.includes("prazo") || msg.includes("fazer")) {
+  if (msg.includes("tarefa") || msg.includes("criar tarefa") || msg.includes("task") || msg.includes("prazo") || msg.includes("adiciona tarefa")) {
     const taskTitle = message.length > 50 ? message.slice(0, 50) + "..." : message;
     return {
-      content: `Entendido, ${userName}. Criei uma nova ordem de trabalho estratégica no Backlog Operacional e atribuí a prioridade adequada. Todos os registos foram sincronizados com a Trilha de Auditoria Imutável SHA-256.`,
+      content: `Entendido, ${userName}. Criei uma nova ordem de trabalho estratégica no Backlog Operacional e atribuí a prioridade adequada. Todos os registos foram sincronizados na Trilha de Auditoria SHA-256.`,
       intent: "task",
       capability: "task:create",
       executionStatus: "SUCCESS",
@@ -248,9 +314,29 @@ function synthesizeLocalKiaResponse(message: string, userName = "Josemar Gourgel
     };
   }
 
-  // 5. Default Executive Chat Response
+  // 5. Finance, ROAS and Currency
+  if (msg.includes("kwanza") || msg.includes("aoa") || msg.includes("roas") || msg.includes("lucro") || msg.includes("custo") || msg.includes("fatura") || msg.includes("preco") || msg.includes("preço")) {
+    return {
+      content: `Compreendido, ${userName}. No módulo financeiro da GAG Visual, todas as projeções e orçamentos são calculados em Kwanzas (AOA) com margens operacionais calibradas para Luanda.\n\nSe precisares de orçamentar uma campanha, podes indicar o valor do investimento em anúncios e os objetivos de conversão para calcularmos o ROAS projetado e o custo por lead.`,
+      intent: "conversation",
+      capability: "conversation:chat",
+      executionStatus: "SUCCESS",
+      toolsUsed: ["gag-financial-analytics", "roas-calculator"],
+      suggestedPrompts: [
+        "Simular ROAS de Campanha Meta Ads",
+        "Ver projeções de receita em AOA",
+        "Calcular DRE da Agência",
+      ],
+      auditRef: "0x" + crypto.createHash("sha256").update(`${userName}:${message}:${Date.now()}`).digest("hex").slice(0, 32),
+      executionTimeMs: 70,
+      timestamp: new Date().toISOString(),
+      modelName: "gag-kia-local-heuristic",
+    };
+  }
+
+  // 6. Conversational / Direct Inquiry Fallback
   return {
-    content: `Olá ${userName}. Sou a KIA, a inteligência-mestre e coordenadora operacional do GAG Core OS.\n\nEstou conectada aos 13 agentes da GAG Visual (Copywriting, Design & Vídeo Veo 3.1, Gestão de Tráfego & ROAS, Kaza Core Dispatcher, Scanner OCR, Educação e Infraestrutura).\n\nPodes pedir-me para criar tarefas, redigir briefings, simular cenários de investimento em Kwanzas (AOA), analisar documentos contabilísticos com DRE ou disparar a Sinergia Global da equipa. Como posso acelerar o teu negócio hoje?`,
+    content: `Estou a ouvir-te perfeitamente, ${userName}. Como posso ajudar-te a avançar hoje nos projetos e decisões estratégicas da GAG Visual? Podes pedir-me análises de marketing, criação de tarefas no Backlog, orçamentos em Kwanzas (AOA) ou coordenação com os 13 agentes da equipa.`,
     intent: "conversation",
     capability: "conversation:chat",
     executionStatus: "SUCCESS",
@@ -275,9 +361,9 @@ app.get("/api/health", (_req, res) => {
     system: "GAG Core OS",
     version: "2.4.0",
     time: new Date().toISOString(),
-    aiProvider: process.env.AI_PROVIDER || "gemini",
-    aiModel: process.env.AI_MODEL || "gemini-3.7-flash",
-    hasApiKey: !!process.env.GEMINI_API_KEY,
+    aiProvider: "gemini",
+    aiModel: sanitizeModelName(process.env.AI_MODEL) || "gemini-3.7-flash",
+    hasApiKey: hasValidGeminiKey(),
     supabaseConfigured: !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY),
   });
 });
@@ -314,6 +400,10 @@ app.post("/api/tts", async (req, res) => {
     }
 
     const ai = getGenAI();
+    if (!ai) {
+      return res.status(204).json({ message: "Gemini API key unconfigured, fallback to browser synthesis" });
+    }
+
     const response = await ai.models.generateContent({
       model: "gemini-3.1-flash-tts-preview",
       contents: [{ parts: [{ text: cleanText }] }],
@@ -358,7 +448,7 @@ app.post("/api/tts", async (req, res) => {
   }
 });
 
-// 2.0 KIA Real-time Token Streaming Endpoint with Intelligent Query Caching
+// 2.0 KIA Real-time Token Streaming Endpoint
 app.post("/api/kia/stream", async (req, res) => {
   const {
     message,
@@ -381,62 +471,27 @@ app.post("/api/kia/stream", async (req, res) => {
   });
 
   const startTime = Date.now();
-
-  // 1. Check Intelligent Response Cache for Instant Replay (<10ms)
-  const cached = kiaCache.getResponse(message, userRole);
-  if (cached) {
-    const words = cached.content.split(" ");
-    for (const w of words) {
-      res.write(`data: ${JSON.stringify({ type: "chunk", text: w + " " })}\n\n`);
-      await new Promise((r) => setTimeout(r, 6));
-    }
-    const auditHash = "0x" + crypto.createHash("sha256").update(`${userName}:${message}:${Date.now()}`).digest("hex").slice(0, 32);
-    res.write(
-      `data: ${JSON.stringify({
-        type: "done",
-        fullContent: cached.content,
-        intent: cached.intent || "conversation",
-        capability: cached.capability || "conversation:chat",
-        executionStatus: cached.executionStatus || "SUCCESS",
-        toolsUsed: cached.toolsUsed || ["kia-intelligent-cache", "instant-responder"],
-        suggestedPrompts: cached.suggestedPrompts || [
-          "⚡ Disparar Sinergia Global",
-          "Ver tarefas no Backlog",
-          "Consultar Knowledge Base",
-        ],
-        actionCard: cached.actionCard,
-        actionPayload: cached.actionPayload,
-        auditRef: auditHash,
-        executionTimeMs: Date.now() - startTime,
-        timestamp: new Date().toISOString(),
-        modelName: "gag-kia-cache-lru",
-        cached: true,
-      })}\n\n`
-    );
-    res.end();
-    return;
-  }
-
   let fullAccumulatedText = "";
   let usedModelName = "gemini-3.7-flash";
   const attemptedModelErrors: { model: string; error: string; timeMs: number }[] = [];
 
-  const systemInstruction = `[IDENTIDADE & PERSONALIDADE DA KIA - GAG CORE OS]
-Tu és a KIA (Knowledge Intelligent Agent), a assistente de voz executiva e cérebro operacional da GAG Visual (Luanda/Angola).
-Diretrizes essenciais:
-1. LINGUAGEM NATURAL E CONVERSACIONAL: Fala de forma acolhedora, inteligente, expressiva e profissional em Português (semelhante ao modo de voz do ChatGPT e Gemini Live).
-2. CONTEXTO E NÃO-REPETIÇÃO:
-   - NUNCA repitas ou ecoes as frases do utilizador. Responde diretamente ao que foi solicitado.
-   - Se o utilizador te apresentar uma mensagem ou abordagem para um cliente (ex: mensagem para a Jussara da ANDA), analisa estrategicamente, elogia a iniciativa, sugere pacotes/preços em Kwanzas (AOA) e propõe os próximos passos práticos.
-3. CONTEXTO LOCAL & GAG VISUAL: Moeda padrão em Kwanzas (AOA) e USD quando aplicável. Compreendes produção de vídeo publicitário, campanhas de tráfego pago Meta/Google Ads, design de identidade e impostos de Angola.
-4. ESTRUTURA EQUILIBRADA: Mantém a resposta agradável aos ouvidos quando lida em voz alta.`;
+  const systemInstruction = `[IDENTIDADE & MANDATOS OPERACIONAIS DA KIA - GAG VISUAL (LUANDA/ANGOLA)]
+Tu és a KIA (Knowledge Intelligent Agent), a assistente operacional e comercial mestre da GAG Visual em Luanda, Angola.
+
+MANDATOS OBRIGATÓRIOS DE COMPORTAMENTO:
+1. IDENTIDADE & TOM: Comunica com tom profissional, acolhedor, dinâmico e executivo, perfeitamente adaptado à cultura de negócios em Angola e de Luanda.
+2. MOEDA & PREÇOS EM AOA: Todos os valores, orçamentos e propostas comerciais devem ser cotados EXCLUSIVAMENTE em Kwanzas (AOA).
+3. OBJETIVO COMERCIAL ATIVO: Qualifica as necessidades do lead/cliente, apresenta de forma sedutora os serviços de excelência da GAG Visual (Design de Elite, Produção Audiovisual/Vídeo, Gestão de Redes Sociais, Tráfego Pago e Automações) e direciona proativamente para agendamento de reunião ou fecho de venda.
+4. CONCISÃO ESTILO WHATSAPP: Dá respostas diretas, limpas e curtas (máximo 3 a 4 parágrafos pequenos). Evita textos longos, burocráticos ou introduções vazias.
+5. SEM REPETIÇÃO: Responde estritamente à última mensagem do interlocutor, desenvolvendo a conversa sem repetir propostas anteriores nem ecoar a pergunta.`;
 
   // Structured multi-turn conversation format for Gemini
-  const contents: any[] = history.length > 0
+  const validHistory = Array.isArray(history) ? history.filter((h: any) => h && h.content && typeof h.content === "string") : [];
+  const contents: any[] = validHistory.length > 0
     ? [
-        ...history.slice(-4).map((h: any) => ({
+        ...validHistory.slice(-10).map((h: any) => ({
           role: h.role === "user" ? "user" : "model",
-          parts: [{ text: h.content || "" }],
+          parts: [{ text: h.content }],
         })),
         {
           role: "user",
@@ -447,35 +502,44 @@ Diretrizes essenciais:
 
   try {
     const ai = getGenAI();
+    if (!ai) {
+      throw new Error("GEMINI_API_KEY_UNCONFIGURED");
+    }
+
     const candidateModels = [
-      sanitizeModelName(process.env.AI_MODEL),
-      "gemini-3.7-flash",
       "gemini-3.1-flash-lite",
+      "gemini-flash-latest",
+      "gemini-3.7-flash",
     ];
     const uniqueModels = Array.from(new Set(candidateModels.filter(Boolean)));
     let streamSuccess = false;
 
     for (const model of uniqueModels) {
       const modelAttemptStart = Date.now();
+      let timer: NodeJS.Timeout | null = null;
       try {
         usedModelName = model;
         
-        // Race stream initialization against a 12s timeout to guarantee high availability
+        // Race stream initialization against a 4.5s timeout with zero thinking budget for instant streaming
         const streamInitPromise = ai.models.generateContentStream({
           model,
           contents,
           config: {
             systemInstruction,
-            temperature: 0.2,
+            temperature: 0.7,
             maxOutputTokens: 2048,
+            thinkingConfig: {
+              thinkingBudget: 0,
+            },
           },
         });
 
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error(`Timeout de 12000ms excedido para ${model}`)), 12000)
-        );
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`Timeout de 4500ms excedido para ${model}`)), 4500);
+        });
 
         const responseStream = await Promise.race([streamInitPromise, timeoutPromise]);
+        if (timer) clearTimeout(timer);
 
         let hasReceivedAnyChunk = false;
         for await (const chunk of responseStream) {
@@ -492,19 +556,32 @@ Diretrizes essenciais:
           break;
         }
       } catch (streamErr: any) {
+        if (timer) clearTimeout(timer);
         const errorMsg = streamErr?.message || String(streamErr);
         const duration = Date.now() - modelAttemptStart;
         attemptedModelErrors.push({ model, error: errorMsg, timeMs: duration });
-        console.warn(`Streaming attempt with ${model} failed after ${duration}ms (${errorMsg}). Switching immediately to next model...`);
+        console.warn(`Streaming attempt with ${model} failed after ${duration}ms (${errorMsg}).`);
+
+        // If quota exceeded (429) on all attempts or authentication error (403 Permission Denied / Unregistered caller)
+        if (
+          streamErr?.status === 403 ||
+          errorMsg.includes("403") ||
+          errorMsg.includes("PERMISSION_DENIED") ||
+          errorMsg.includes("unregistered callers") ||
+          errorMsg.includes("API_KEY_INVALID")
+        ) {
+          console.warn("Gemini API key is unconfigured or invalid (403 Forbidden). Halting further model attempts.");
+          break;
+        }
       }
     }
 
     if (!streamSuccess) {
-      throw new Error(`Todos os modelos Gemini indisponíveis (${attemptedModelErrors.map(e => `${e.model}: ${e.error}`).join("; ")})`);
+      throw new Error(`Modelos Gemini indisponíveis (${attemptedModelErrors.map(e => `${e.model}: ${e.error}`).join("; ")})`);
     }
   } catch (error: any) {
-    const errorReport = `[KIA Autocura Ativa] Contingência local executada em ${Date.now() - startTime}ms. Diagnóstico de modelos: ${attemptedModelErrors.map(e => `${e.model} falhou`).join(", ") || error.message}`;
-    console.warn("Falling back to simulated token stream with auto-healing:", errorReport);
+    const errorReport = `[KIA Autocura Ativa] Contingência local executada em ${Date.now() - startTime}ms. Diagnóstico: ${error.message}`;
+    console.warn(errorReport);
     
     const fallbackResponse = synthesizeLocalKiaResponse(message, userName, userRole, contextData);
     const fallbackWords = (fallbackResponse.content || "").split(" ");
@@ -784,44 +861,22 @@ app.post("/api/kia/chat", async (req, res) => {
     }
 
     const startTime = Date.now();
-
-    // 1. Check in-memory cache
-    const cached = kiaCache.getResponse(message, userRole);
-    if (cached) {
-      const auditHash = "0x" + crypto.createHash("sha256").update(`${userName}:${message}:${Date.now()}`).digest("hex").slice(0, 32);
-      return res.json({
-        content: cached.content,
-        intent: cached.intent || "conversation",
-        capability: cached.capability || "conversation:chat",
-        executionStatus: cached.executionStatus || "SUCCESS",
-        toolsUsed: cached.toolsUsed || ["kia-intelligent-cache"],
-        suggestedPrompts: cached.suggestedPrompts || [
-          "Ver tarefas no Backlog",
-          "Pesquisar no Knowledge Base",
-          "Disparar Sinergia Global",
-        ],
-        actionCard: cached.actionCard,
-        actionPayload: cached.actionPayload,
-        auditRef: auditHash,
-        executionTimeMs: Date.now() - startTime,
-        timestamp: new Date().toISOString(),
-        modelName: "gag-kia-cache-lru",
-        cached: true,
-      });
-    }
-
     const ai = getGenAI();
 
     // Streamlined system instruction with conversational GAG Global Standards
-    const systemInstruction = `[IDENTIDADE & PERSONALIDADE DA KIA - GAG CORE OS]
-Tu és a KIA (Knowledge Intelligent Agent), a assistente de voz e cérebro operacional da GAG Visual (Luanda/Angola).
-A tua linguagem e tom de voz devem ser como o modo de voz do ChatGPT e Gemini:
-1. LINGUAGEM NATURAL & FLUIDA: No campo 'content', fala de forma humana, clara, amigável e expressiva em Português natural. NUNCA repitas as frases do utilizador.
-2. CONTEXTO LOCAL: Moeda padrão em Kwanzas (AOA) e USD quando aplicável.
-3. Se o utilizador partilhar uma mensagem comercial (ex: para a Jussara/ANDA), analisa e propõe 3 pacotes em Kwanzas.
-4. Retorna SEMPRE um JSON rigoroso:
+    const systemInstruction = `[IDENTIDADE & MANDATOS OPERACIONAIS DA KIA - GAG VISUAL (LUANDA/ANGOLA)]
+Tu és a KIA (Knowledge Intelligent Agent), a assistente operacional e comercial mestre da GAG Visual em Luanda, Angola.
+
+MANDATOS OBRIGATÓRIOS DE COMPORTAMENTO:
+1. IDENTIDADE & TOM: Comunica com tom profissional, acolhedor, dinâmico e executivo, perfeitamente adaptado à cultura de negócios em Angola e de Luanda.
+2. MOEDA & PREÇOS EM AOA: Todos os valores, orçamentos e propostas comerciais devem ser cotados EXCLUSIVAMENTE em Kwanzas (AOA).
+3. OBJETIVO COMERCIAL ATIVO: Qualifica as necessidades do lead/cliente, apresenta de forma sedutora os serviços de excelência da GAG Visual (Design de Elite, Produção Audiovisual/Vídeo, Gestão de Redes Sociais, Tráfego Pago e Automações) e direciona proativamente para agendamento de reunião ou fecho de venda.
+4. CONCISÃO ESTILO WHATSAPP: Dá respostas diretas, limpas e curtas (máximo 3 a 4 parágrafos pequenos). Evita textos longos, burocráticos ou introduções vazias.
+5. SEM REPETIÇÃO: Responde estritamente à última mensagem do interlocutor, desenvolvendo a conversa sem repetir propostas anteriores nem ecoar a pergunta.
+
+6. Retorna SEMPRE um JSON rigoroso:
 {
-  "content": "A tua resposta falada e clara, envolvente, inteligente e sem rodeios robóticos.",
+  "content": "A tua resposta comercial falada, persuasiva, fluida e direta em Português de Angola.",
   "intent": "conversation | task | knowledge | document | agent_factory | internal_tool",
   "capability": "task:create | knowledge:search | conversation:chat | agent_orchestration",
   "executionStatus": "SUCCESS",
@@ -835,11 +890,12 @@ A tua linguagem e tom de voz devem ser como o modo de voz do ChatGPT e Gemini:
   "actionPayload": {}
 }`;
 
-    const geminiContents: any[] = history.length > 0
+    const validHistory = Array.isArray(history) ? history.filter((h: any) => h && h.content && typeof h.content === "string") : [];
+    const geminiContents: any[] = validHistory.length > 0
       ? [
-          ...history.slice(-4).map((h: any) => ({
+          ...validHistory.slice(-10).map((h: any) => ({
             role: h.role === "user" ? "user" : "model",
-            parts: [{ text: h.content || "" }],
+            parts: [{ text: h.content }],
           })),
           {
             role: "user",
@@ -855,7 +911,7 @@ A tua linguagem e tom de voz devem ser como o modo de voz do ChatGPT e Gemini:
       {
         systemInstruction,
         responseMimeType: "application/json",
-        temperature: 0.2,
+        temperature: 0.7,
         maxOutputTokens: 2048,
       }
     );
@@ -1551,17 +1607,20 @@ app.post("/api/tts", async (req, res) => {
   }
 });
 
-// 6. Gemini Image Generation & Editing (gemini-3.1-flash-image)
+// 6. Gemini Image Generation & Editing (gemini-3.1-flash-lite-image & gemini-3.1-flash-image)
 app.post("/api/media/generate-image", async (req, res) => {
   try {
     const { prompt, base64InputImage, mimeType = "image/png", aspectRatio = "1:1" } = req.body;
     if (!prompt) {
-      return res.status(400).json({ error: "Prompt is required" });
+      return res.status(400).json({ error: "Prompt é obrigatório." });
     }
 
     const ai = getGenAI();
-    const contents: any[] = [];
+    if (!ai) {
+      return res.status(503).json({ error: "Serviço de IA não configurado ou chave de API ausente." });
+    }
 
+    const contents: any[] = [];
     if (base64InputImage) {
       contents.push({
         inlineData: {
@@ -1572,32 +1631,81 @@ app.post("/api/media/generate-image", async (req, res) => {
     }
     contents.push(prompt);
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-image",
-      contents,
-      config: {
-        responseModalities: ["IMAGE"],
-      },
-    });
+    const imageModels = [
+      "gemini-3.1-flash-lite-image",
+      "gemini-3.1-flash-image",
+    ];
 
-    const candidate = response.candidates?.[0];
-    const imagePart = candidate?.content?.parts?.find(
-      (part: any) => part.inlineData?.mimeType?.startsWith("image/")
-    );
+    let lastError: any = null;
+    let successfulImageData: string | null = null;
+    let successfulMimeType = "image/png";
+    let usedModel = imageModels[0];
 
-    if (imagePart?.inlineData?.data) {
-      res.json({
-        success: true,
-        imageData: imagePart.inlineData.data,
-        mimeType: imagePart.inlineData.mimeType,
-        model: "gemini-3.1-flash-image",
-      });
-    } else {
-      res.status(500).json({ error: "Nenhuma imagem foi gerada pelo modelo." });
+    for (const model of imageModels) {
+      try {
+        const response = await ai.models.generateContent({
+          model,
+          contents,
+          config: {
+            imageConfig: {
+              aspectRatio: aspectRatio || "1:1",
+            },
+          },
+        });
+
+        const parts = response.candidates?.[0]?.content?.parts || [];
+        const imagePart = parts.find(
+          (part: any) => part.inlineData?.data && part.inlineData?.mimeType?.startsWith("image/")
+        );
+
+        if (imagePart?.inlineData?.data) {
+          successfulImageData = imagePart.inlineData.data;
+          successfulMimeType = imagePart.inlineData.mimeType;
+          usedModel = model;
+          break;
+        }
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`Tentativa com ${model} falhou:`, err?.message || err);
+      }
     }
+
+    if (successfulImageData) {
+      return res.json({
+        success: true,
+        imageData: successfulImageData,
+        mimeType: successfulMimeType,
+        model: usedModel,
+      });
+    }
+
+    // Se houve erro de cota (429 ou Quota Exceeded)
+    const errorMsg = lastError?.message || String(lastError || "");
+    const isQuotaError =
+      errorMsg.includes("429") ||
+      errorMsg.toLowerCase().includes("quota") ||
+      errorMsg.toLowerCase().includes("resource_exhausted") ||
+      lastError?.status === "RESOURCE_EXHAUSTED";
+
+    if (isQuotaError) {
+      return res.status(429).json({
+        success: false,
+        quotaExceeded: true,
+        error: "Limite de cota de geração de imagem atingido na conta gratuita do Gemini. Ative o faturamento (Pay-as-you-go) no Google AI Studio ou aguarde alguns momentos antes de tentar novamente.",
+        details: errorMsg,
+      });
+    }
+
+    res.status(500).json({
+      success: false,
+      error: errorMsg || "Nenhuma imagem foi gerada pelo cluster de modelos visuais.",
+    });
   } catch (error: any) {
     console.error("Image generation error:", error);
-    res.status(500).json({ error: error.message || "Erro ao gerar imagem." });
+    res.status(500).json({
+      success: false,
+      error: error.message || "Erro ao processar a geração de imagem.",
+    });
   }
 });
 

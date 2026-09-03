@@ -1,5 +1,6 @@
 import React from "react";
 import { AppProvider, useApp } from "./context/AppContext";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Header } from "./components/Header";
 import { Sidebar } from "./components/Sidebar";
 import { MobileNav } from "./components/MobileNav";
@@ -108,8 +109,10 @@ const MainLayout: React.FC = () => {
 
 export default function App() {
   return (
-    <AppProvider>
-      <MainLayout />
-    </AppProvider>
+    <ErrorBoundary>
+      <AppProvider>
+        <MainLayout />
+      </AppProvider>
+    </ErrorBoundary>
   );
 }

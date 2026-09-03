@@ -304,7 +304,7 @@ export const MultimodalStudioView: React.FC = () => {
               {isGeneratingImage ? (
                 <>
                   <RefreshCw className="w-4 h-4 animate-spin" />
-                  <span>A gerar com gemini-3.1-flash-image-preview...</span>
+                  <span>A gerar com IA visual Gemini...</span>
                 </>
               ) : (
                 <>

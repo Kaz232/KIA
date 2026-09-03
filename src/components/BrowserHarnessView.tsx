@@ -186,8 +186,10 @@ export const BrowserHarnessView: React.FC = () => {
       title: `[Browser Harness] ${title}`,
       description: `${desc}\n\nOrigem: ${activeUrl}\nData: ${new Date().toLocaleString("pt-PT")}`,
       assignedAgentId: "agent-programmer",
-      priority: "medium",
-      status: "pending",
+      priority: "MEDIUM",
+      status: "TODO",
+      category: "DEV",
+      tags: ["browser", "harness"],
     });
     setActionSuccessMsg("Tarefa de acompanhamento criada com sucesso!");
     setTimeout(() => setActionSuccessMsg(null), 3000);

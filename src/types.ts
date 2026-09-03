@@ -309,6 +309,19 @@ export type AgentStatus =
   | "REJECTED"
   | "ARCHIVED";
 
+export type DashboardAgentStatus = "Rascunho" | "Em Teste" | "Ativo" | "Rejeitado" | "Inativo";
+
+export function summarizeDashboardAgents(agents: Array<{ status: string }>) {
+  return {
+    total: agents.length,
+    drafts: agents.filter((agent) => agent.status === "Rascunho" || agent.status === "DRAFT").length,
+    tests: agents.filter((agent) => agent.status === "Em Teste" || agent.status === "REVIEW_REQUIRED").length,
+    active: agents.filter((agent) => agent.status === "Ativo" || agent.status === "ACTIVE" || agent.status === "APPROVED").length,
+    rejected: agents.filter((agent) => agent.status === "Rejeitado" || agent.status === "REJECTED").length,
+    inactive: agents.filter((agent) => agent.status === "Inativo" || agent.status === "ARCHIVED" || agent.status === "INACTIVE").length,
+  };
+}
+
 export interface Agent {
   id: string;
   slug: string;

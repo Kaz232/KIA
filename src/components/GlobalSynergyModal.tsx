@@ -239,7 +239,7 @@ export const GlobalSynergyModal: React.FC<GlobalSynergyModalProps> = ({
                       <div className="flex items-start space-x-3">
                         {agentInfo ? (
                           <AgentAvatar
-                            name={agentInfo.name}
+                            agentId={agentInfo.id}
                             avatarColor={agentInfo.avatarColor}
                             size="sm"
                           />

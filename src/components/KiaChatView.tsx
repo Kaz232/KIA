@@ -69,7 +69,7 @@ export const KiaChatView: React.FC = () => {
   const systemSettingsRef = useRef(systemSettings);
 
   const isProcessing = isKiaThinking;
-  const isBackendConnected = supabaseHealth.isOnline;
+  const isBackendConnected = supabaseHealth.isConnected;
 
   // Keep mutable refs in sync with latest state
   useEffect(() => {

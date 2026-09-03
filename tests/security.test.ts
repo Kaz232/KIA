@@ -3,6 +3,7 @@
  * Validação de autenticação, rejeição de tokens inválidos e proteção de storage.
  */
 import http from "http";
+import { describe, it, expect } from "vitest";
 import { app } from "../server/index";
 
 export interface TestResult {
@@ -85,6 +86,15 @@ export async function executeSecurityTests(): Promise<TestResult[]> {
   return results;
 }
 
+describe("Security & RLS API Tests", () => {
+  it("executa a suite de verificações de segurança", async () => {
+    const results = await executeSecurityTests();
+    results.forEach((r) => {
+      expect(r.passed, `${r.name} falhou: ${r.error || r.status}`).toBe(true);
+    });
+  });
+});
+
 // Execução autónoma caso seja invocado diretamente via CLI
 if (typeof process !== "undefined" && process.argv && process.argv[1]?.includes("security.test")) {
   executeSecurityTests().then((res) => {
@@ -94,3 +104,4 @@ if (typeof process !== "undefined" && process.argv && process.argv[1]?.includes(
     });
   });
 }
+

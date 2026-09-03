@@ -36,10 +36,19 @@ export class ExecutionEngine {
    * Helper to initialize GoogleGenAI safely
    */
   private getGenAI(): GoogleGenAI | null {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey || apiKey.trim() === "" || apiKey === "dummy_key") {
-      return null;
+    const raw = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.API_KEY;
+    if (!raw || typeof raw !== "string") return null;
+    const trimmed = raw.trim();
+    if (trimmed === "" || trimmed === "dummy_key" || trimmed === "MY_GEMINI_API_KEY") return null;
+    
+    let apiKey = trimmed;
+    if (trimmed.includes(" ") || trimmed.includes("\n")) {
+      const aizaMatch = trimmed.match(/AIza[0-9A-Za-z-_]{35}/);
+      const aqMatch = trimmed.match(/AQ\.[0-9A-Za-z._-]{30,}/);
+      if (aizaMatch) apiKey = aizaMatch[0];
+      else if (aqMatch) apiKey = aqMatch[0];
     }
+
     return new GoogleGenAI({
       apiKey,
       httpOptions: { headers: { "User-Agent": "gag-core-os-phase1" } },
@@ -61,12 +70,13 @@ export class ExecutionEngine {
 
     if (ai) {
       try {
-        const candidateModels = ["gemini-3.7-flash", "gemini-3.1-flash-lite"];
+        const candidateModels = ["gemini-3.7-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
         for (const model of candidateModels) {
+          let timer: NodeJS.Timeout | null = null;
           try {
-            const timeoutPromise = new Promise((_, reject) =>
-              setTimeout(() => reject(new Error("Timeout")), 15000)
-            );
+            const timeoutPromise = new Promise((_, reject) => {
+              timer = setTimeout(() => reject(new Error("Timeout")), 30000);
+            });
             const generatePromise = ai.models.generateContent({
               model,
               contents: `Tu és o agente especializado '${agentId}' no GAG Core OS (Governança e Automação de Gestão).
@@ -75,10 +85,14 @@ Objetivo: ${prompt}
 Responda de forma rigorosa, executiva, em língua portuguesa, com tópicos acionáveis e sem placeholders.`,
               config: {
                 temperature: 0.3,
+                thinkingConfig: {
+                  thinkingBudget: 0,
+                },
               },
             });
 
             const resp: any = await Promise.race([generatePromise, timeoutPromise]);
+            if (timer) clearTimeout(timer);
             const candidateText = resp.text || resp.candidates?.[0]?.content?.parts?.[0]?.text;
             if (candidateText && candidateText.trim().length > 0) {
               const textContent = candidateText.trim();

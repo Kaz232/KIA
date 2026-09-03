@@ -520,7 +520,7 @@ export const TasksView: React.FC = () => {
                         className="p-3 bg-slate-900 border border-slate-800 rounded-xl"
                       >
                         <div className="flex items-center justify-between mb-1">
-                          <span className="font-bold text-white text-[11px]">{art.name}</span>
+                          <span className="font-bold text-white text-[11px]">{art.title}</span>
                           <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 uppercase">
                             {art.type}
                           </span>

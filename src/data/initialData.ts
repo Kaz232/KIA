@@ -30,9 +30,9 @@ export const INITIAL_AGENTS: Agent[] = [
   {
     id: "agent-kia",
     slug: "kia-master",
-    name: "KIA (Assistente Central & Orquestradora)",
-    description: "Gestão do sistema GAG Core, roteamento de tarefas hands-free por voz e execução de ações rápidas.",
-    objective: "Interpretar intenções do utilizador, disparar automações e apresentar estados do sistema de forma sucinta.",
+    name: "KIA (Assistente Operacional & Comercial Mestre)",
+    description: "Assistente mestre da GAG Visual em Luanda: qualificação de leads, vendas no WhatsApp, propostas em AOA e orquestração.",
+    objective: "Qualificar leads, apresentar serviços da GAG Visual (Design de Elite, Redes, Automações), cotar em Kwanzas (AOA) e fechar vendas.",
     skills: [
       "gag-knowledge-curation",
       "gag-prompt-engineering",
@@ -51,9 +51,9 @@ export const INITIAL_AGENTS: Agent[] = [
       "audit:write",
     ],
     status: "ACTIVE",
-    version: "3.0.0",
+    version: "3.2.0",
     avatarColor: "#F59E0B", // GAG Gold
-    roleTitle: "Assistente Central, Gestão do Sistema & Orquestradora",
+    roleTitle: "Assistente Operacional, Comercial Mestre & Orquestradora",
     systemPrompt: getAgentCatalogPrompt("agent-kia"),
     createdAt: "2026-01-15T09:00:00Z",
     updatedAt: "2026-08-29T11:00:00Z",

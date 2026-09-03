@@ -136,7 +136,7 @@ export const N8NEnvironmentVault: React.FC = () => {
         status: "error",
         message: err?.message || "Falha ao conectar ao endpoint N8N.",
       });
-      playSfx("error");
+      playSfx("warning");
     } finally {
       setIsTesting(false);
     }
@@ -370,7 +370,7 @@ export const N8NEnvironmentVault: React.FC = () => {
                         if (window.confirm(`Remover ambiente "${editForm.name}"?`)) {
                           envManager.removeEnvironment(editForm.id);
                           refreshState();
-                          playSfx("trash");
+                          playSfx("action");
                         }
                       }}
                       className="p-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-xl border border-red-500/30 transition-colors"

@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
+import { AlertTriangle, ExternalLink, X, ShieldAlert } from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
 import {
   User,
   UserRole,
@@ -34,7 +36,6 @@ import {
 } from "../data/initialData";
 import { playSfx, speakNaturalText } from "../utils/audio";
 import { messageQueue } from "../utils/messageQueue";
-import { kiaClientCache } from "../utils/kiaClientCache";
 import {
   getSupabaseConfig,
   saveSupabaseConfig,
@@ -207,6 +208,16 @@ interface AppContextType {
       | "auto_send",
     volume?: number
   ) => void;
+
+  // Global Quota & RESOURCE_EXHAUSTED Toast Notification
+  quotaToast: {
+    show: boolean;
+    message: string;
+    details?: string;
+    billingUrl: string;
+  } | null;
+  showQuotaToast: (customMessage?: string, details?: string) => void;
+  dismissQuotaToast: () => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -264,6 +275,63 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const refreshSupabaseHealth = async (): Promise<SupabaseHealthState> => {
     return await dbClient.checkHealth();
   };
+
+  // Global Quota Exhausted (RESOURCE_EXHAUSTED / 429) Toast State & Handler
+  const [quotaToast, setQuotaToast] = useState<{
+    show: boolean;
+    message: string;
+    details?: string;
+    billingUrl: string;
+  } | null>(null);
+
+  const showQuotaToast = (customMessage?: string, details?: string) => {
+    setQuotaToast({
+      show: true,
+      message: customMessage || "Limite de cota de IA atingido (RESOURCE_EXHAUSTED)",
+      details:
+        details ||
+        "Atingiu o limite de requisições gratuito (Free Tier) da API Gemini. Para continuar a utilizar as capacidades multimodais e agentes sem interrupção, verifique o estado da faturação ou ative o plano Pay-as-you-go no Google AI Studio.",
+      billingUrl: "https://ai.google.dev/gemini-api/docs/rate-limits",
+    });
+  };
+
+  const dismissQuotaToast = () => {
+    setQuotaToast(null);
+  };
+
+  // Global error listeners for catching RESOURCE_EXHAUSTED and 429 quota errors across the app
+  useEffect(() => {
+    // 1. Global listener for unhandled promise rejections
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event?.reason;
+      const strReason =
+        typeof reason === "string" ? reason : reason?.message || JSON.stringify(reason || "");
+      if (
+        strReason.includes("RESOURCE_EXHAUSTED") ||
+        strReason.includes("Quota exceeded") ||
+        (strReason.includes("429") && strReason.toLowerCase().includes("quota"))
+      ) {
+        showQuotaToast(
+          "Limite de Cota de IA Atingido (RESOURCE_EXHAUSTED)",
+          "A API Gemini atingiu o limite de requisições gratuito. Verifique o estado da faturação no Google AI Studio."
+        );
+      }
+    };
+
+    // 2. Custom event listener for components to dispatch quota warnings
+    const handleCustomQuotaEvent = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      showQuotaToast(customEvent.detail?.message, customEvent.detail?.details);
+    };
+
+    window.addEventListener("unhandledrejection", handleUnhandledRejection);
+    window.addEventListener("gemini-quota-exceeded", handleCustomQuotaEvent);
+
+    return () => {
+      window.removeEventListener("unhandledrejection", handleUnhandledRejection);
+      window.removeEventListener("gemini-quota-exceeded", handleCustomQuotaEvent);
+    };
+  }, []);
 
   const [agents, setAgents] = useState<Agent[]>(() => {
     const saved = localStorage.getItem("gag_agents");
@@ -968,124 +1036,109 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         let accumulatedContent = "";
         let doneData: any = null;
 
-        // Check high-speed client memory cache first
-        const clientCached = kiaClientCache.get(text, activeRole);
-        if (clientCached) {
-          doneData = {
-            ...clientCached,
-            fullContent: clientCached.content,
-            cached: true,
-          };
-          accumulatedContent = clientCached.content;
-          streamFinished = true;
-        } else {
-          try {
-            const response = await fetch("/api/kia/stream", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                message: text,
-                history: chatMessages.slice(-6).map((m) => ({
-                  role: m.role,
-                  content: m.content,
-                })),
-                userRole: activeRole,
-                userName: currentUser.name,
-                contextData: {
-                  tasksCount: tasks.length,
-                  knowledgeCount: knowledge.length,
-                  agentsCount: agents.length,
-                  docsCount: scannedDocs.length,
-                },
-              }),
-            });
+        try {
+          const response = await fetch("/api/kia/stream", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              message: text,
+              history: chatMessages.slice(-10).map((m) => ({
+                role: m.role,
+                content: m.content,
+              })),
+              userRole: activeRole,
+              userName: currentUser.name,
+              contextData: {
+                tasksCount: tasks.length,
+                knowledgeCount: knowledge.length,
+                agentsCount: agents.length,
+                docsCount: scannedDocs.length,
+              },
+            }),
+          });
 
-            if (response.ok && response.body) {
-              const reader = response.body.getReader();
-              const decoder = new TextDecoder();
-              let buffer = "";
+          if (response.ok && response.body) {
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
 
-              while (true) {
-                const { value, done } = await reader.read();
-                if (done) break;
+            while (true) {
+              const { value, done } = await reader.read();
+              if (done) break;
 
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split("\n\n");
-                buffer = lines.pop() || "";
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split("\n\n");
+              buffer = lines.pop() || "";
 
-                for (const line of lines) {
-                  if (line.startsWith("data: ")) {
-                    try {
-                      const payload = JSON.parse(line.slice(6));
-                      if (payload.type === "chunk" && payload.text) {
-                        accumulatedContent += payload.text;
-                        setChatMessages((prev) =>
-                          prev.map((msg) =>
-                            msg.id === assistantMsgId
-                              ? { ...msg, content: accumulatedContent, isStreaming: true }
-                              : msg
-                          )
-                        );
-                      } else if (payload.type === "done") {
-                        doneData = payload;
-                      }
-                    } catch {
-                      // Ignore JSON partial chunk parsing errors
+              for (const line of lines) {
+                if (line.startsWith("data: ")) {
+                  try {
+                    const payload = JSON.parse(line.slice(6));
+                    if (payload.type === "chunk" && payload.text) {
+                      accumulatedContent += payload.text;
+                      setChatMessages((prev) =>
+                        prev.map((msg) =>
+                          msg.id === assistantMsgId
+                            ? { ...msg, content: accumulatedContent, isStreaming: true }
+                            : msg
+                        )
+                      );
+                    } else if (payload.type === "done") {
+                      doneData = payload;
                     }
+                  } catch {
+                    // Ignore JSON partial chunk parsing errors
                   }
                 }
               }
-              streamFinished = true;
-            } else {
-              throw new Error(`Streaming failed with status: ${response.status}`);
             }
-          } catch (streamErr) {
-            console.warn("Real-time stream failed, falling back to /api/kia/chat:", streamErr);
-            const fallbackRes = await fetch("/api/kia/chat", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                message: text,
-                history: chatMessages.slice(-6).map((m) => ({
-                  role: m.role,
-                  content: m.content,
-                })),
-                userRole: activeRole,
-                userName: currentUser.name,
-                contextData: {
-                  tasksCount: tasks.length,
-                  knowledgeCount: knowledge.length,
-                  agentsCount: agents.length,
-                  docsCount: scannedDocs.length,
-                },
-              }),
-            });
+            streamFinished = true;
+          } else {
+            throw new Error(`Streaming failed with status: ${response.status}`);
+          }
+        } catch (streamErr: any) {
+          console.warn("Real-time stream failed, falling back to /api/kia/chat:", streamErr);
+          const streamErrMsg = streamErr?.message || String(streamErr || "");
+          if (
+            streamErrMsg.includes("RESOURCE_EXHAUSTED") ||
+            streamErrMsg.includes("Quota exceeded") ||
+            streamErrMsg.includes("429")
+          ) {
+            showQuotaToast();
+          }
 
-            if (fallbackRes.ok) {
-              doneData = await fallbackRes.json();
-              accumulatedContent = doneData.content || "";
-            } else {
-              throw new Error(`Fallback failed: ${fallbackRes.status}`);
+          const fallbackRes = await fetch("/api/kia/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              message: text,
+              history: chatMessages.slice(-10).map((m) => ({
+                role: m.role,
+                content: m.content,
+              })),
+              userRole: activeRole,
+              userName: currentUser.name,
+              contextData: {
+                tasksCount: tasks.length,
+                knowledgeCount: knowledge.length,
+                agentsCount: agents.length,
+                docsCount: scannedDocs.length,
+              },
+            }),
+          });
+
+          if (fallbackRes.ok) {
+            doneData = await fallbackRes.json();
+            accumulatedContent = doneData.content || "";
+          } else {
+            if (fallbackRes.status === 429) {
+              showQuotaToast();
             }
+            throw new Error(`Fallback failed: ${fallbackRes.status}`);
           }
         }
 
         const finalContent = doneData?.fullContent || doneData?.content || accumulatedContent || "Instrução processada com sucesso.";
-
-        // Store into client cache for instant repeat query replay
-        if (finalContent && !clientCached) {
-          kiaClientCache.set(text, {
-            content: finalContent,
-            intent: doneData?.intent || "conversation",
-            capability: doneData?.capability || "conversation:chat",
-            executionStatus: doneData?.executionStatus || "SUCCESS",
-            toolsUsed: doneData?.toolsUsed || ["gemini-streaming-core"],
-            suggestedPrompts: doneData?.suggestedPrompts,
-            actionCard: doneData?.actionCard,
-            actionPayload: doneData?.actionPayload,
-            modelName: doneData?.modelName,
-          }, activeRole);
-        }
 
         // Check if action payload requires automatic state execution & API dispatch
         if (doneData?.actionPayload) {
@@ -2655,9 +2708,89 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         exportSystemBackup,
         importSystemBackup,
         playSfx,
+        quotaToast,
+        showQuotaToast,
+        dismissQuotaToast,
       }}
     >
       {children}
+
+      {/* Global Quota Exceeded & RESOURCE_EXHAUSTED Toast Notification */}
+      <AnimatePresence>
+        {quotaToast && quotaToast.show && (
+          <motion.div
+            initial={{ opacity: 0, y: 40, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            className="fixed bottom-6 right-6 z-[99999] max-w-md w-[calc(100vw-3rem)] bg-slate-900/95 backdrop-blur-md border border-amber-500/40 rounded-xl p-4 shadow-2xl shadow-amber-500/10 text-slate-100 ring-1 ring-amber-500/20"
+            role="alert"
+            aria-live="assertive"
+            id="quota-exhausted-global-toast"
+          >
+            <div className="flex items-start gap-3">
+              <div className="p-2 rounded-lg bg-amber-500/20 text-amber-400 shrink-0 mt-0.5 border border-amber-500/30">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2">
+                  <h4 className="text-sm font-semibold text-amber-300 leading-tight">
+                    {quotaToast.message}
+                  </h4>
+                  <button
+                    onClick={dismissQuotaToast}
+                    className="text-slate-400 hover:text-slate-200 p-1 rounded-md hover:bg-slate-800 transition-colors"
+                    title="Fechar aviso"
+                    aria-label="Fechar aviso"
+                    id="btn-dismiss-quota-toast"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {quotaToast.details && (
+                  <p className="text-xs text-slate-300 mt-1.5 leading-relaxed">
+                    {quotaToast.details}
+                  </p>
+                )}
+
+                <div className="mt-3 flex items-center gap-2 flex-wrap">
+                  <a
+                    href={quotaToast.billingUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-medium text-xs rounded-lg transition-colors shadow-sm"
+                    id="link-check-gemini-billing"
+                  >
+                    <span>Verificar Estado de Faturação</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+
+                  <a
+                    href="https://aistudio.google.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white font-medium text-xs rounded-lg transition-colors border border-slate-700"
+                    id="link-open-aistudio"
+                  >
+                    <span>AI Studio</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+
+                  <button
+                    onClick={dismissQuotaToast}
+                    className="px-2.5 py-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors ml-auto"
+                    id="btn-dismiss-quota-toast-text"
+                  >
+                    Fechar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </AppContext.Provider>
   );
 };
