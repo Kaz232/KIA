@@ -49,6 +49,7 @@ import {
   mapSupabaseUserToGagUser,
 } from "../services/supabaseAuth";
 import { dbClient, SupabaseHealthState } from "../persistence/supabaseClient";
+import { ensureSentenceSanity } from "../services/kiaRobustChat";
 import {
   auth as firebaseAuth,
   signInWithGoogle as firebaseSignInWithGoogle,
@@ -432,9 +433,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           model.includes("1.5") ||
           model.includes("3.1-pro") ||
           model.includes("2.5") ||
+          model.includes("3.7") ||
           model === "gemini-pro"
         ) {
-          parsed.aiModel = "gemini-3.7-flash";
+          parsed.aiModel = "gemini-3.1-flash-lite";
         }
         return {
           ...parsed,
@@ -448,7 +450,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
     return {
       aiProvider: "gemini",
-      aiModel: "gemini-3.7-flash",
+      aiModel: "gemini-3.1-flash-lite",
       supabaseConfigured: supabaseCfg.isConfigured,
       supabaseUrl: supabaseCfg.url,
       supabaseAnonKey: supabaseCfg.anonKey,
@@ -489,7 +491,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           "Quais agentes estão ativos na Agent Factory?",
           "Executa a skill de Análise de Briefing",
         ],
-        modelName: "gemini-3.7-flash",
+        modelName: "gemini-3.1-flash-lite",
       },
     ];
   });
@@ -1050,6 +1052,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               })),
               userRole: activeRole,
               userName: currentUser.name,
+              maxOutputTokens: 4096,
               contextData: {
                 tasksCount: tasks.length,
                 knowledgeCount: knowledge.length,
@@ -1120,6 +1123,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               })),
               userRole: activeRole,
               userName: currentUser.name,
+              maxOutputTokens: 4096,
               contextData: {
                 tasksCount: tasks.length,
                 knowledgeCount: knowledge.length,
@@ -1140,7 +1144,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         }
 
-        const finalContent = doneData?.fullContent || doneData?.content || accumulatedContent || "Instrução processada com sucesso.";
+        const rawContent = doneData?.fullContent || doneData?.content || accumulatedContent || "Instrução processada com sucesso.";
+        const finalContent = ensureSentenceSanity(rawContent);
 
         // Check if action payload requires automatic state execution & API dispatch
         if (doneData?.actionPayload) {

@@ -169,16 +169,20 @@ router.post('/api/whatsapp/message', async (req, res) => {
         : null
     };
 
-    // 6. Dispara os dados para o Webhook da Make
+    // 6. Dispara os dados para o Webhook da Make (sem travar a resposta)
     let makeDispatchSuccess = false;
     let makeErrorDetails: string | null = null;
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2500);
       const makeResponse = await fetch(MAKE_WEBHOOK_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(makePayload)
+        body: JSON.stringify(makePayload),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
 
       if (!makeResponse.ok) {
         throw new Error(`Erro no Webhook da Make: ${makeResponse.status} ${makeResponse.statusText}`);
@@ -186,7 +190,7 @@ router.post('/api/whatsapp/message', async (req, res) => {
       makeDispatchSuccess = true;
     } catch (err: any) {
       makeErrorDetails = err.message;
-      console.warn('[Make.com Webhook] Aviso no envio para Make:', err.message);
+      console.warn('[Make.com Webhook] Processado nativamente na GAG (Aviso Make):', err.message);
       // Se Make estiver inacessível ou offline temporariamente, não quebra a resposta para o cliente Z-API
     }
 

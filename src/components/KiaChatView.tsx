@@ -27,7 +27,7 @@ import { KiaTamagotchiCompanion } from "./KiaTamagotchiCompanion";
 import { wakeWordDetector } from "../utils/wakeWordDetector";
 import { stopTtsAudio, playSfx, getIsSpeaking, speakNaturalText } from "../utils/audio";
 import { ChatAttachment, ChatMessage } from "../types";
-import { validateResponseCompleteness } from "../services/kiaRobustChat";
+import { validateResponseCompleteness, ensureSentenceSanity } from "../services/kiaRobustChat";
 
 export const KiaChatView: React.FC = () => {
   const {
@@ -718,7 +718,10 @@ export const KiaChatView: React.FC = () => {
                 if (line.startsWith("data: ")) {
                   try {
                     const payload = JSON.parse(line.slice(6));
-                    if (payload.type === "chunk" && payload.text) {
+                    if (payload.type === "reset") {
+                      accumulatedContent = "";
+                      totalChunksReceived = 0;
+                    } else if (payload.type === "chunk" && payload.text) {
                       totalChunksReceived++;
                       accumulatedContent += payload.text;
 
@@ -798,9 +801,7 @@ export const KiaChatView: React.FC = () => {
               lastDoneData = fallbackJson;
               if (fallbackJson.content) {
                 totalChunksReceived++;
-                accumulatedContent = accumulatedContent
-                  ? `${accumulatedContent.trimEnd()}\n\n${fallbackJson.content.trimStart()}`
-                  : fallbackJson.content;
+                accumulatedContent = fallbackJson.content;
 
                 setChatMessages((prev) =>
                   prev.map((m) =>
@@ -833,14 +834,14 @@ export const KiaChatView: React.FC = () => {
         const isTruncated =
           passDonePayload?.finishReason === "MAX_TOKENS" ||
           passDonePayload?.isTruncated === true ||
-          !validation.isComplete;
+          (!validation.isComplete && passDonePayload?.finishReason !== "STOP");
 
         if (isTruncated && continuationAttempts < maxContinuations && passSucceeded) {
           continuationAttempts++;
           setStreamProgress((prev) => ({
             ...prev,
             continuationCount: continuationAttempts,
-            statusText: `Limite de tokens atingido. A combinar fragmentos adicionais (tentativa #${continuationAttempts + 1})...`,
+            statusText: `A concluir frase e resposta sem cortes (tentativa #${continuationAttempts + 1})...`,
           }));
           await new Promise((r) => setTimeout(r, 450));
         } else {
@@ -854,18 +855,18 @@ export const KiaChatView: React.FC = () => {
         lastDoneData?.isTruncated
       );
 
+      const sanitizedContent = ensureSentenceSanity(accumulatedContent) || "Resposta processada com sucesso.";
+
       setChatMessages((prev) =>
         prev.map((m) =>
           m.id === assistantMsgId
             ? {
                 ...m,
-                content:
-                  accumulatedContent ||
-                  "Resposta processada. Se necessário, solicita continuidade.",
+                content: sanitizedContent,
                 isStreaming: false,
                 chunksCount: totalChunksReceived,
                 combinedContinuations: continuationAttempts,
-                isTruncated: !finalValidation.isComplete,
+                isTruncated: !finalValidation.isComplete && lastDoneData?.finishReason === "MAX_TOKENS",
                 isComplete: finalValidation.isComplete,
                 finishReason: lastDoneData?.finishReason || "STOP",
                 modelName: lastUsedModel,
@@ -886,9 +887,13 @@ export const KiaChatView: React.FC = () => {
 
       // Handle TTS if configured
       if (!ttsMuted && systemSettings.autoAudioTts && accumulatedContent) {
+        setSpeakingMsgId(assistantMsgId);
         speakNaturalText(accumulatedContent, {
           voiceName: systemSettings.voiceName || "Kore",
           engine: "auto",
+          onStart: () => setSpeakingMsgId(assistantMsgId),
+          onEnd: () => setSpeakingMsgId(null),
+          onError: () => setSpeakingMsgId(null),
         });
       }
 
@@ -1122,8 +1127,8 @@ export const KiaChatView: React.FC = () => {
                     </div>
                   )}
 
-                  {/* Truncation continuation button (if response was cut or user wants to stream next chunk) */}
-                  {!msg.isStreaming && !isUser && (msg.isTruncated || ((msg.content || "").length > 450 && !msg.content.trim().endsWith("."))) && (
+                  {/* Truncation continuation button (shown only if response was genuinely truncated) */}
+                  {!msg.isStreaming && !isUser && Boolean(msg.isTruncated) && (
                     <div className="mt-2.5 pt-2 border-t border-slate-800/80 flex items-center justify-between gap-2 flex-wrap">
                       <button
                         onClick={() => handleContinueResponse(msg.id, msg.content)}

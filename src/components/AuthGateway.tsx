@@ -216,6 +216,26 @@ export const AuthGateway: React.FC<AuthGatewayProps> = ({ onClose, isModal = fal
             )}
           </div>
 
+          {/* Instant 1-Click Executive Access Banner */}
+          <div className="mt-4 p-3 bg-gradient-to-r from-amber-500/15 via-yellow-500/10 to-transparent border border-amber-500/40 rounded-xl flex items-center justify-between gap-3">
+            <div className="flex items-center space-x-2.5">
+              <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/50 flex items-center justify-center flex-shrink-0">
+                <Sparkles className="w-4 h-4 text-amber-400" />
+              </div>
+              <div>
+                <div className="text-xs font-bold text-amber-300">Modo Executivo Imediato (Sem Senha)</div>
+                <div className="text-[11px] text-slate-400">Acesso livre para apresentação e demonstração completa</div>
+              </div>
+            </div>
+            <button
+              onClick={() => handleQuickSandboxAccess("OWNER")}
+              className="px-3.5 py-1.5 bg-gradient-to-r from-amber-400 to-yellow-500 hover:from-amber-300 hover:to-yellow-400 text-black font-black text-xs rounded-lg shadow-md shadow-amber-500/20 flex items-center space-x-1 transition-all"
+            >
+              <span>Entrar como Owner</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
           {/* Navigation Tabs */}
           <div className="flex items-center space-x-1 mt-6 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
             <button

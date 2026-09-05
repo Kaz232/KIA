@@ -390,15 +390,8 @@ export class SupabasePersistenceClient {
       serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
     }
 
-    // Check import.meta.env (Vite / Client context)
-    if (!url && typeof import.meta !== "undefined" && (import.meta as any).env) {
-      const meta = (import.meta as any).env;
-      url = meta.VITE_SUPABASE_URL || meta.SUPABASE_URL || "";
-      anonKey = meta.VITE_SUPABASE_ANON_KEY || meta.SUPABASE_ANON_KEY || "";
-    }
-
-    // Check localStorage in browser context
-    if (!url && typeof localStorage !== "undefined") {
+    // Check browser context
+    if (!url && typeof window !== "undefined") {
       url = localStorage.getItem("gag_supabase_url") || "";
       anonKey = localStorage.getItem("gag_supabase_anon_key") || "";
       serviceRoleKey = localStorage.getItem("gag_supabase_service_key") || "";

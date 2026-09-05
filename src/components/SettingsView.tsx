@@ -57,7 +57,7 @@ export const SettingsView: React.FC = () => {
   const [dbStatusNotice, setDbStatusNotice] = useState<string | null>(null);
 
   // Model and AI Settings
-  const [aiModel, setAiModel] = useState(systemSettings.aiModel || "gemini-3.7-flash");
+  const [aiModel, setAiModel] = useState(systemSettings.aiModel || "gemini-3.1-flash-lite");
   const [autoAudioTts, setAutoAudioTts] = useState(systemSettings.autoAudioTts);
   const [voiceName, setVoiceName] = useState(systemSettings.voiceName || "Kore");
   const [wakeWordEnabled, setWakeWordEnabled] = useState(systemSettings.wakeWordEnabled ?? true);
@@ -346,8 +346,8 @@ export const SettingsView: React.FC = () => {
                 onChange={(e) => setAiModel(e.target.value)}
                 className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-amber-500/50"
               >
-                <option value="gemini-3.7-flash">Gemini 3.7 Flash (Ultra-Rápido, Multimodal & Inteligente)</option>
-                <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite (Latência Mínima & Alta Eficiência)</option>
+                <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash Lite (Recomendado: Estável & Sem Limites de Quota)</option>
+                <option value="gemini-flash-latest">Gemini Flash Latest (Modelo Principal)</option>
               </select>
             </div>
 

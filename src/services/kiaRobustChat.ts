@@ -68,6 +68,41 @@ export interface KiaRobustQueryOptions {
 }
 
 /**
+ * Sanitizes and guarantees that a text ends with complete sentences,
+ * closed code blocks, closed bold markers, and proper terminal punctuation.
+ */
+export function ensureSentenceSanity(text: string): string {
+  let clean = (text || "").trim();
+  if (!clean) return clean;
+
+  // 1. Fix unclosed code blocks (```)
+  const codeBlocks = clean.match(/```/g);
+  if (codeBlocks && codeBlocks.length % 2 !== 0) {
+    clean += "\n```";
+  }
+
+  // 2. Fix unclosed bold (**)
+  const boldMatches = clean.match(/\*\*/g);
+  if (boldMatches && boldMatches.length % 2 !== 0) {
+    clean += "**";
+  }
+
+  // 3. Remove trailing dangling connectors or conjunctions (e.g., " e", " de", " para", etc.)
+  clean = clean.replace(/(\s+(?:e|de|do|da|dos|das|para|com|em|no|na|nos|nas|por|ou|que|se|o|a|os|as))\s*[,;\-–—]?$/i, ".");
+
+  // 4. Remove dangling punctuation at end
+  clean = clean.replace(/[,;\-–—\/&]\s*$/, ".");
+
+  // 5. Ensure terminal punctuation if ending abruptly without punctuation/emoji/markdown
+  const hasTerminal = /[.!?:"'”’\)\*✓\]\p{Extended_Pictographic}]$/u.test(clean) || clean.endsWith("```") || clean.endsWith("**");
+  if (!hasTerminal) {
+    clean += ".";
+  }
+
+  return clean;
+}
+
+/**
  * Validates whether a response from KIA is complete without cuts or truncations.
  */
 export function validateResponseCompleteness(
@@ -111,20 +146,23 @@ export function validateResponseCompleteness(
   const closeBrackets = (clean.match(/\]/g) || []).length;
   const hasUnclosedParenthesis = openParens > closeParens || openBrackets > closeBrackets;
 
-  // 3. Check if text ends abruptly mid-sentence
-  const terminalPunctuation = /[.!?:"'”’\)\*✓\]]$/;
+  // 3. Check if text ends abruptly mid-sentence (including Unicode emojis, symbols, markdown closures)
+  const terminalPunctuation = /[.!?:"'”’\)\*✓\]\p{Extended_Pictographic}]$/u;
   const endsWithTerminal = terminalPunctuation.test(clean);
   const endsWithDanglingPunctuation = /[,;\-–—\/&]$/.test(clean);
 
-  const endsAbruptly = hasUnclosedCodeBlock || (!endsWithTerminal && !clean.endsWith("```")) || endsWithDanglingPunctuation;
+  const endsAbruptly = hasUnclosedCodeBlock || (!endsWithTerminal && !clean.endsWith("```") && !clean.endsWith("**")) || endsWithDanglingPunctuation;
 
   let score = 100;
   if (hasUnclosedCodeBlock) score -= 35;
   if (hasUnclosedParenthesis) score -= 20;
   if (endsWithDanglingPunctuation) score -= 30;
-  if (!endsWithTerminal && !clean.endsWith("```")) score -= 25;
+  if (!endsWithTerminal && !clean.endsWith("```") && !clean.endsWith("**")) score -= 25;
 
-  const isComplete = !hasUnclosedCodeBlock && !endsWithDanglingPunctuation && (endsWithTerminal || clean.endsWith("```"));
+  // If finishReason is explicit STOP, and there are no dangling punctuation marks or unclosed code blocks, consider complete
+  const isComplete = !hasUnclosedCodeBlock && !endsWithDanglingPunctuation && (
+    finishReason === "STOP" || endsWithTerminal || clean.endsWith("```") || clean.endsWith("**")
+  );
 
   const reason = isComplete
     ? "Resposta recebida integralmente com terminação e estrutura válidas."
@@ -156,7 +194,7 @@ export async function sendComplexKiaQueryWithRetry(
     history = [],
     baseUrl = "",
     maxRetries = 3,
-    initialMaxTokens = 2048,
+    initialMaxTokens = 4096,
     maxTokensCap = 8192,
     backoffBaseMs = 800,
     onAttempt,
@@ -265,7 +303,7 @@ export async function sendComplexKiaQueryWithRetry(
           totalAttempts: attempt,
           retriesPerformed: attempt - 1,
           finalFinishReason: data.finishReason || "STOP",
-          usedModel: data.modelName || "gemini-3.7-flash",
+          usedModel: data.modelName || "gemini-3.1-flash-lite",
           totalDurationMs: Date.now() - overallStart,
           history: attemptHistory,
           validation,
@@ -302,7 +340,7 @@ export async function sendComplexKiaQueryWithRetry(
         totalAttempts: attempt,
         retriesPerformed: attempt - 1,
         finalFinishReason: data.finishReason || "MAX_TOKENS",
-        usedModel: data.modelName || "gemini-3.7-flash",
+        usedModel: data.modelName || "gemini-3.1-flash-lite",
         totalDurationMs: Date.now() - overallStart,
         history: attemptHistory,
         validation,

@@ -285,51 +285,74 @@ export async function playPcmAudio(base64Data: string, sampleRate = 24000): Prom
 
 // Clean markdown text for fluid spoken audio output
 export function sanitizeForVoice(text: string): string {
+  if (!text) return "";
   return text
+    // Remove code blocks
     .replace(/```[\s\S]*?```/g, "bloco de código omitido.")
     .replace(/`([^`]+)`/g, "$1")
+    // Replace markdown links with their text
     .replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1")
+    // Natural spoken numbers with thousands ("180.000" -> "180 mil")
+    .replace(/(\d+)\.000\.000/g, "$1 milhões")
+    .replace(/(\d+)\.(\d{3})\.000/g, "$1 milhões e $2 mil")
+    .replace(/(\d+)\.000/g, "$1 mil")
+    // Numbered lists into spoken pauses ("1. " -> "1, ")
+    .replace(/(\d+)\.\s+/g, "$1, ")
+    // Normalize currencies
+    .replace(/\bAOA\b/gi, "Kwanzas")
+    .replace(/\bKz\b/gi, "Kwanzas")
+    // Strip markdown symbols
     .replace(/[*#_~>]/g, "")
-    .replace(/\bAOA\b/g, "Kwanzas")
-    .replace(/\bKz\b/g, "Kwanzas")
-    .replace(/\n+/g, " ")
+    // Turn bullet markers into natural pauses
+    .replace(/^[\s•\-–—]+\s*/gm, "")
+    // Turn semicolons into commas for natural rhythm
+    .replace(/;\s*/g, ", ")
+    // Turn newlines into periods for clean sentence breaks
+    .replace(/\n+/g, ". ")
     .replace(/\s{2,}/g, " ")
     .trim();
 }
 
-// Split text into natural conversational sentence chunks to bypass browser utterance limits
+// Split text into natural conversational sentence chunks to bypass browser utterance limits and Chrome 14s timeout
 function splitIntoSpokenChunks(text: string, maxChunkLength = 160): string[] {
-  const sentences = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [text];
+  if (!text) return [];
+  // Split on sentence terminators (. ! ?)
+  const rawSentences = text.split(/(?<=[.!?])\s+/);
   const chunks: string[] = [];
   let current = "";
 
-  for (const s of sentences) {
+  for (const s of rawSentences) {
     const trimmed = s.trim();
     if (!trimmed) continue;
-    if ((current + " " + trimmed).trim().length <= maxChunkLength) {
-      current = (current + " " + trimmed).trim();
+
+    if ((current ? `${current} ${trimmed}` : trimmed).length <= maxChunkLength) {
+      current = current ? `${current} ${trimmed}` : trimmed;
     } else {
       if (current) chunks.push(current);
+
       if (trimmed.length > maxChunkLength) {
-        // Subdivide long clauses by commas
-        const subParts = trimmed.split(/,\s*/);
+        // Break long sentence by commas or clauses
+        const subParts = trimmed.split(/(?<=[,;:])\s+/);
         let subCurrent = "";
         for (const sub of subParts) {
-          if ((subCurrent + ", " + sub).length <= maxChunkLength) {
-            subCurrent = subCurrent ? `${subCurrent}, ${sub}` : sub;
+          if ((subCurrent ? `${subCurrent} ${sub}` : sub).length <= maxChunkLength) {
+            subCurrent = subCurrent ? `${subCurrent} ${sub}` : sub;
           } else {
             if (subCurrent) chunks.push(subCurrent);
             subCurrent = sub;
           }
         }
-        if (subCurrent) current = subCurrent;
-        else current = "";
+        current = subCurrent;
       } else {
         current = trimmed;
       }
     }
   }
-  if (current) chunks.push(current);
+
+  if (current && current.trim()) {
+    chunks.push(current.trim());
+  }
+
   return chunks.filter((c) => c.trim().length > 0);
 }
 
@@ -361,7 +384,7 @@ function getBestPortugueseVoice(): SpeechSynthesisVoice | null {
   return voices.find((v) => v.default) || voices[0] || null;
 }
 
-// Speak text using browser SpeechSynthesis
+// Speak text using browser SpeechSynthesis with full chunk completion and GC protection
 async function speakViaBrowserSynthesis(
   chunks: string[],
   onEnd?: () => void
@@ -379,14 +402,15 @@ async function speakViaBrowserSynthesis(
 
       wakeWordDetector.setMutedForPlayback(true);
 
-      // Keep-alive watchdog for Chrome SpeechSynthesis 14s bug
+      // Keep-alive watchdog for browser pause / sleep bug
       if (chromeKeepAliveInterval) clearInterval(chromeKeepAliveInterval);
       chromeKeepAliveInterval = setInterval(() => {
         if (isCurrentlySpeaking && typeof window !== "undefined" && "speechSynthesis" in window) {
-          window.speechSynthesis.pause();
-          window.speechSynthesis.resume();
+          if (window.speechSynthesis.paused) {
+            window.speechSynthesis.resume();
+          }
         }
-      }, 8000);
+      }, 3000);
 
       let chunkIndex = 0;
 
@@ -402,18 +426,25 @@ async function speakViaBrowserSynthesis(
         chunkIndex++;
 
         const utterance = new SpeechSynthesisUtterance(currentText);
+        // CRITICAL: Retain strong global reference to prevent V8 GC from silencing audio mid-sentence
+        (window as any).__activeUtterance = utterance;
+
         utterance.lang = "pt-PT";
-        utterance.rate = 1.08;
+        utterance.rate = 1.05;
         utterance.pitch = 1.0;
 
         const voice = getBestPortugueseVoice();
         if (voice) {
           utterance.voice = voice;
+          if (voice.lang) utterance.lang = voice.lang;
         }
 
         utterance.onend = () => {
-          if (chunkIndex < chunks.length && isCurrentlySpeaking) {
-            setTimeout(speakNextChunk, 30);
+          (window as any).__activeUtterance = null;
+          if (!isCurrentlySpeaking) return;
+          if (chunkIndex < chunks.length) {
+            // Natural pause between sentences (50ms)
+            setTimeout(speakNextChunk, 50);
           } else {
             stopTtsAudio();
             onEnd?.();
@@ -421,10 +452,19 @@ async function speakViaBrowserSynthesis(
           }
         };
 
-        utterance.onerror = (e) => {
-          console.debug("Speech synthesis chunk event:", e);
-          if (chunkIndex < chunks.length && isCurrentlySpeaking) {
-            speakNextChunk();
+        utterance.onerror = (e: any) => {
+          (window as any).__activeUtterance = null;
+          console.debug("Speech synthesis chunk event:", e?.error || e);
+          if (!isCurrentlySpeaking) return;
+          if (e?.error === "canceled" || e?.error === "interrupted") {
+            stopTtsAudio();
+            onEnd?.();
+            resolve(true);
+            return;
+          }
+          // Continue to next chunk so a single hiccup does not truncate entire speech
+          if (chunkIndex < chunks.length) {
+            setTimeout(speakNextChunk, 50);
           } else {
             stopTtsAudio();
             onEnd?.();
@@ -439,13 +479,14 @@ async function speakViaBrowserSynthesis(
         speakNextChunk();
       } else {
         window.speechSynthesis.onvoiceschanged = () => {
+          window.speechSynthesis.onvoiceschanged = null;
           speakNextChunk();
         };
         setTimeout(() => {
           if (isCurrentlySpeaking && !window.speechSynthesis.speaking) {
             speakNextChunk();
           }
-        }, 60);
+        }, 80);
       }
     } catch (err) {
       console.warn("Browser SpeechSynthesis error:", err);
@@ -453,6 +494,9 @@ async function speakViaBrowserSynthesis(
     }
   });
 }
+
+// Server TTS cooldown timestamp (to avoid waiting on 429 quota exhausted)
+let serverTtsCooldownUntil = 0;
 
 // Natural voice output with dual-engine fallback & sentence chunking
 export async function speakNaturalText(
@@ -476,21 +520,21 @@ export async function speakNaturalText(
   isCurrentlySpeaking = true;
   onStart?.();
 
-  // Limit to conversational snippet (up to 480 chars) to prevent speech fatigue
-  const voiceSnippet = clean.length > 500 ? clean.slice(0, 480) + "..." : clean;
-  const chunks = splitIntoSpokenChunks(voiceSnippet);
+  // Speak the FULL clean text without ANY truncation!
+  const chunks = splitIntoSpokenChunks(clean);
 
-  // 1. Try Server Gemini Studio TTS First if engine is 'auto' or 'gemini_studio'
-  if (engine === "gemini_studio" || engine === "auto") {
+  // 1. Try Server Gemini Studio TTS if requested and not in cooldown
+  const canAttemptServer = (engine === "gemini_studio" || engine === "auto") && Date.now() > serverTtsCooldownUntil;
+  if (canAttemptServer) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
 
       const res = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          text: voiceSnippet,
+          text: clean,
           voiceName,
         }),
         signal: controller.signal,
@@ -505,13 +549,17 @@ export async function speakNaturalText(
           onEnd?.();
           return;
         }
+      } else {
+        // Cooldown for 3 minutes if quota or server error
+        serverTtsCooldownUntil = Date.now() + 180000;
       }
     } catch (err) {
-      console.warn("Gemini Studio TTS unavailable, using natural browser synthesis:", err);
+      serverTtsCooldownUntil = Date.now() + 180000;
+      console.warn("Gemini Studio TTS unavailable, switching to browser synthesis:", err);
     }
   }
 
-  // 2. High-performance Browser SpeechSynthesis fallback
+  // 2. High-performance Browser SpeechSynthesis speaks all chunks sequentially
   const synthesisSuccess = await speakViaBrowserSynthesis(chunks, onEnd);
   if (synthesisSuccess) return;
 
