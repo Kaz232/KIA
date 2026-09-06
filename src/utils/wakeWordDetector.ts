@@ -66,7 +66,9 @@ class KiaWakeWordDetector {
   private shouldRestart: boolean = false;
   private isMutedForPlayback: boolean = false;
   private isPausedForActiveInput: boolean = false;
+  private isSoundFeedbackEnabled: boolean = false;
   private lastTriggerTime: number = 0;
+  private lastStartTime: number = 0;
   private restartTimeout: any = null;
 
   private listeners: Set<WakeWordCallback> = new Set();
@@ -96,6 +98,10 @@ class KiaWakeWordDetector {
 
   public getStatus(): "listening" | "inactive" | "triggered" | "permission_blocked" | "unsupported" {
     return this.currentStatus;
+  }
+
+  public setSoundFeedback(enabled: boolean) {
+    this.isSoundFeedbackEnabled = enabled;
   }
 
   public subscribe(callback: WakeWordCallback): () => void {
@@ -129,12 +135,23 @@ class KiaWakeWordDetector {
    */
   public setMutedForPlayback(muted: boolean) {
     this.isMutedForPlayback = muted;
+    if (muted && this.recognition) {
+      try {
+        this.recognition.onend = null;
+        this.recognition.abort();
+      } catch {}
+      this.recognition = null;
+      this.isListening = false;
+    } else if (!muted && this.isEnabled && !this.isPausedForActiveInput && !this.isListening) {
+      this.resumeAfterActiveInput(800);
+    }
   }
 
   /**
-   * Pause wake word detector when user opens manual microphone recording in chat
+   * Cleanly pause wake word detector when user opens manual microphone recording in chat
+   * Releases the hardware cleanly so speech recognition does not collide.
    */
-  public pauseForActiveInput() {
+  public async pauseForActiveInput(): Promise<void> {
     this.isPausedForActiveInput = true;
     if (this.restartTimeout) {
       clearTimeout(this.restartTimeout);
@@ -142,24 +159,33 @@ class KiaWakeWordDetector {
     }
     if (this.recognition) {
       try {
+        this.recognition.onend = null;
+        this.recognition.onerror = null;
         this.recognition.abort();
       } catch (e) {}
       this.recognition = null;
     }
     this.isListening = false;
+    this.setStatus("inactive");
+    // Hardware release buffer
+    await new Promise((resolve) => setTimeout(resolve, 150));
   }
 
   /**
    * Resume wake word detector after manual microphone recording stops
    */
-  public resumeAfterActiveInput() {
+  public resumeAfterActiveInput(delayMs = 1200) {
     this.isPausedForActiveInput = false;
-    if (this.isEnabled) {
-      setTimeout(() => {
-        if (!this.isPausedForActiveInput && this.isEnabled && !this.isListening) {
+    if (this.restartTimeout) {
+      clearTimeout(this.restartTimeout);
+      this.restartTimeout = null;
+    }
+    if (this.isEnabled && !this.isListening && !this.isMutedForPlayback) {
+      this.restartTimeout = setTimeout(() => {
+        if (!this.isPausedForActiveInput && this.isEnabled && !this.isListening && !this.isMutedForPlayback) {
           this.initRecognition();
         }
-      }, 500);
+      }, delayMs);
     }
   }
 
@@ -185,7 +211,7 @@ class KiaWakeWordDetector {
   }
 
   /**
-   * Stop wake word listening
+   * Stop wake word listening completely
    */
   public stop() {
     this.isEnabled = false;
@@ -199,6 +225,8 @@ class KiaWakeWordDetector {
 
     if (this.recognition) {
       try {
+        this.recognition.onend = null;
+        this.recognition.onerror = null;
         this.recognition.abort();
       } catch (e) {}
       this.recognition = null;
@@ -209,7 +237,14 @@ class KiaWakeWordDetector {
   }
 
   private initRecognition() {
-    if (typeof window === "undefined" || !this.isEnabled || this.isPausedForActiveInput) return;
+    if (
+      typeof window === "undefined" ||
+      !this.isEnabled ||
+      this.isPausedForActiveInput ||
+      this.isMutedForPlayback
+    ) {
+      return;
+    }
 
     const SpeechRecognitionClass = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognitionClass) {
@@ -220,8 +255,11 @@ class KiaWakeWordDetector {
     try {
       if (this.recognition) {
         try {
+          this.recognition.onend = null;
+          this.recognition.onerror = null;
           this.recognition.abort();
         } catch (e) {}
+        this.recognition = null;
       }
 
       const rec = new SpeechRecognitionClass();
@@ -231,6 +269,7 @@ class KiaWakeWordDetector {
       rec.maxAlternatives = 2;
 
       rec.onstart = () => {
+        this.lastStartTime = Date.now();
         this.isListening = true;
         this.setStatus("listening");
       };
@@ -254,8 +293,10 @@ class KiaWakeWordDetector {
             }
             this.lastTriggerTime = now;
 
-            // Trigger activation audio & visual status
-            playSfx("wake_activation", 0.45);
+            // Trigger activation audio only if explicitly enabled
+            if (this.isSoundFeedbackEnabled) {
+              playSfx("wake_activation", 0.3);
+            }
             this.setStatus("triggered");
 
             const payload: WakeWordEvent = {
@@ -277,7 +318,7 @@ class KiaWakeWordDetector {
 
             // Return to listening status after feedback
             setTimeout(() => {
-              if (this.isEnabled && !this.isPausedForActiveInput) {
+              if (this.isEnabled && !this.isPausedForActiveInput && !this.isMutedForPlayback) {
                 this.setStatus("listening");
               }
             }, 1800);
@@ -294,19 +335,23 @@ class KiaWakeWordDetector {
           this.setStatus("permission_blocked");
           this.isListening = false;
         } else if (error === "no-speech" || error === "aborted" || error === "network") {
-          // Normal transient errors in speech recognition — will restart automatically in onend
+          // Normal transient pause / silence in speech recognition
         }
       };
 
       rec.onend = () => {
+        const runDuration = Date.now() - this.lastStartTime;
         this.isListening = false;
-        if (this.shouldRestart && this.isEnabled && !this.isPausedForActiveInput) {
-          // Schedule graceful restart to keep always-listening active
+        this.recognition = null;
+
+        if (this.shouldRestart && this.isEnabled && !this.isPausedForActiveInput && !this.isMutedForPlayback) {
+          // Anti-flapping: If the browser dropped within 2.5s, back off quietly to avoid hardware clicking
+          const restartDelay = runDuration < 2500 ? 3500 : 1800;
           this.restartTimeout = setTimeout(() => {
-            if (this.shouldRestart && this.isEnabled && !this.isPausedForActiveInput) {
+            if (this.shouldRestart && this.isEnabled && !this.isPausedForActiveInput && !this.isMutedForPlayback) {
               this.initRecognition();
             }
-          }, 350);
+          }, restartDelay);
         } else if (!this.isPausedForActiveInput) {
           this.setStatus("inactive");
         }
@@ -315,11 +360,11 @@ class KiaWakeWordDetector {
       rec.start();
       this.recognition = rec;
     } catch (err: any) {
-      console.warn("Failed to initialize continuous SpeechRecognition for Wake Word:", err);
+      console.warn("SpeechRecognition init info:", err?.message || err);
       if (this.shouldRestart && this.isEnabled && !this.isPausedForActiveInput) {
         this.restartTimeout = setTimeout(() => {
           this.initRecognition();
-        }, 1500);
+        }, 3000);
       }
     }
   }

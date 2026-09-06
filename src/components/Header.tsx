@@ -225,21 +225,21 @@ export const Header: React.FC = () => {
         {/* Wake Word "KIA" Hands-Free Detector Toggle */}
         <button
           onClick={() => {
-            const next = !(systemSettings.wakeWordEnabled ?? true);
+            const next = !(systemSettings.wakeWordEnabled ?? false);
             updateSettings({ wakeWordEnabled: next });
           }}
           className={`p-2 rounded-lg border transition-all flex items-center space-x-1.5 ${
-            systemSettings.wakeWordEnabled ?? true
+            systemSettings.wakeWordEnabled ?? false
               ? "bg-amber-500/20 border-amber-500/50 text-amber-300 shadow-sm shadow-amber-500/20"
               : "bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300"
           }`}
           title={
-            systemSettings.wakeWordEnabled ?? true
-              ? 'Detetor de Voz Ativo: Diga "KIA" ou "Ei KIA" a qualquer momento para comandar'
-              : 'Detetor de Voz "KIA" Desativado (Clique para Ativar Modo Mãos-Livres)'
+            systemSettings.wakeWordEnabled ?? false
+              ? 'Detetor de Voz Ativo: Diga "KIA" ou "Ei KIA" para comandar'
+              : 'Microfone Mãos-Livres Desativado (Clique para Ativar)'
           }
         >
-          {systemSettings.wakeWordEnabled ?? true ? (
+          {systemSettings.wakeWordEnabled ?? false ? (
             <>
               <Mic className="w-4 h-4 text-amber-400 animate-pulse" />
               <span className="text-[10px] font-black uppercase text-amber-300 hidden xl:inline">

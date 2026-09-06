@@ -21,6 +21,7 @@ import {
   Check,
   Square,
   Layers,
+  Brain,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { KiaTamagotchiCompanion } from "./KiaTamagotchiCompanion";
@@ -28,6 +29,69 @@ import { wakeWordDetector } from "../utils/wakeWordDetector";
 import { stopTtsAudio, playSfx, getIsSpeaking, speakNaturalText } from "../utils/audio";
 import { ChatAttachment, ChatMessage } from "../types";
 import { validateResponseCompleteness, ensureSentenceSanity } from "../services/kiaRobustChat";
+import { KiaPersonaModal } from "./KiaPersonaModal";
+import { loadPersonaConfig, savePersonaConfig, KiaPersonaConfig } from "../config/kiaPersona";
+
+/**
+ * Strips intrusive meta-thoughts (e.g. "olha agora vou mudar de tom", "vou adotar uma postura mais...", "como diretora vou...")
+ * so that KIA only displays and speaks true conversational dialogue, keeping internal reflections silent.
+ */
+export function filterIntrusiveMetaThoughts(text: string): string {
+  if (!text) return "";
+  let result = text;
+  // Strip leading meta-statements announcing tone change or internal prompt adaptation
+  result = result
+    .replace(/^(?:olha,?\s*)?(?:agora\s+)?(?:eu\s+)?(?:vou\s+)?(?:mudar\s+de\s+tom|mudar\s+o\s+tom|adotar\s+um\s+tom|falar\s+com\s+um\s+tom|adotar\s+uma\s+postura)[^.!?\n]*[.!?\n]+\s*/i, "")
+    .replace(/^(?:deixa-me\s+)?(?:pensar\s+para\s+mim\s+mesma|refletir\s+aqui|pensar\s+estrategicamente)[^.!?\n]*[.!?\n]+\s*/i, "")
+    .replace(/^(?:como\s+diretora\s+executiva,?\s*)?(?:vou\s+agora\s+estruturar|vou\s+mudar\s+a\s+minha\s+abordagem)[^.!?\n]*[.!?\n]+\s*/i, "")
+    .trim();
+  return result;
+}
+
+/**
+ * Extracts the cognitive interpretation segment and natural conversational text.
+ */
+export function parseKiaInterpretation(rawText: string) {
+  if (!rawText) {
+    return { interpretation: "", isInterpreting: false, cleanContent: "" };
+  }
+
+  const openTagMatch = rawText.match(/<interpretacao>/i);
+  if (!openTagMatch) {
+    return {
+      interpretation: "",
+      isInterpreting: false,
+      cleanContent: filterIntrusiveMetaThoughts(rawText),
+    };
+  }
+
+  const closeTagMatch = rawText.match(/<\/interpretacao>/i);
+
+  if (!closeTagMatch) {
+    // Model is currently streaming its interpretation!
+    const openIndex = openTagMatch.index! + openTagMatch[0].length;
+    const partial = rawText.slice(openIndex).trim();
+    return {
+      interpretation: partial,
+      isInterpreting: true,
+      cleanContent: "",
+    };
+  }
+
+  const openIndex = openTagMatch.index! + openTagMatch[0].length;
+  const closeIndex = closeTagMatch.index!;
+  const interpretation = rawText.slice(openIndex, closeIndex).trim();
+  const rawClean = (
+    rawText.slice(0, openTagMatch.index!) +
+    rawText.slice(closeIndex + closeTagMatch[0].length)
+  ).trim();
+
+  return {
+    interpretation,
+    isInterpreting: false,
+    cleanContent: filterIntrusiveMetaThoughts(rawClean),
+  };
+}
 
 export const KiaChatView: React.FC = () => {
   const {
@@ -84,7 +148,17 @@ export const KiaChatView: React.FC = () => {
     continuationCount: 0,
     statusText: "",
   });
+  const [isPersonaModalOpen, setIsPersonaModalOpen] = useState(false);
+  const [personaConfig, setPersonaConfig] = useState<KiaPersonaConfig>(loadPersonaConfig);
+  const [collapsedInterpretations, setCollapsedInterpretations] = useState<Record<string, boolean>>({});
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  const toggleInterpretationCollapse = (msgId: string) => {
+    setCollapsedInterpretations((prev) => ({
+      ...prev,
+      [msgId]: !prev[msgId],
+    }));
+  };
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -94,6 +168,7 @@ export const KiaChatView: React.FC = () => {
   const speechDetectedRef = useRef(false);
   const autoSentRef = useRef(false);
   const isListeningRef = useRef(false);
+  const isStartingVoiceRef = useRef(false);
   const isProcessingRef = useRef(false);
   const isSpeakingLiveRef = useRef(false);
   const attachmentsRef = useRef(attachments);
@@ -211,7 +286,10 @@ export const KiaChatView: React.FC = () => {
       stopTtsAudio();
       setSpeakingMsgId(msgId);
       playSfx("click", 0.3);
-      speakNaturalText(content, {
+      const cleanText = filterIntrusiveMetaThoughts(
+        content.replace(/<interpretacao>[\s\S]*?<\/interpretacao>/gi, "").trim()
+      );
+      speakNaturalText(cleanText || content, {
         voiceName: systemSettings.voiceName || "Kore",
         engine: "auto",
         onStart: () => setSpeakingMsgId(msgId),
@@ -336,141 +414,28 @@ export const KiaChatView: React.FC = () => {
     await handleVoiceCommandExecution(pendingText);
   };
 
-  // Inicialização e Controlo Permanente do Reconhecimento de Voz
+  // Limpeza de timers e reconhecimento ao desmontar
   useEffect(() => {
-    const SpeechRecognitionClass =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognitionClass) return;
-
-    let recognition: any = null;
-
-    try {
-      recognition = new SpeechRecognitionClass();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = "pt-PT";
-      recognition.maxAlternatives = 1;
-
-      recognition.onstart = () => {
-        isListeningRef.current = true;
-        setIsListening(true);
-      };
-
-      recognition.onresult = (event: any) => {
-        let finalStr = "";
-        let interimStr = "";
-
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const result = event.results[i];
-          const transcript = result?.[0]?.transcript || "";
-
-          if (!transcript.trim()) continue;
-
-          if (result.isFinal) {
-            finalStr += transcript + " ";
-          } else {
-            interimStr += transcript;
-          }
-        }
-
-        const combined = `${finalStr}${interimStr}`.trim();
-
-        if (!combined) return;
-
-        liveTranscriptRef.current = combined;
-        setLiveTranscript(combined);
-        speechDetectedRef.current = true;
-
-        if (silenceTimerRef.current) {
-          clearTimeout(silenceTimerRef.current);
-          silenceTimerRef.current = null;
-        }
-
-        if (finalStr.trim()) {
-          scheduleSilenceAutoSend(combined);
-        }
-      };
-
-      recognition.onspeechend = () => {
-        const text = liveTranscriptRef.current.trim();
-
-        if (text.length < 2 || autoSentRef.current) return;
-
-        if (silenceTimerRef.current) {
-          clearTimeout(silenceTimerRef.current);
-        }
-
-        setIsSilenceCountdown(true);
-
-        silenceTimerRef.current = setTimeout(() => {
-          if (autoSentRef.current) return;
-
-          autoSentRef.current = true;
-          setIsSilenceCountdown(false);
-
-          void stopVoiceRecordingAndSend();
-        }, 800);
-      };
-
-      recognition.onerror = (err: any) => {
-        const errorType = err?.error;
-        if (errorType !== "no-speech") {
-          console.warn("SpeechRecognition event:", errorType);
-        }
-
-        if (errorType === "not-allowed" || errorType === "service-not-allowed") {
-          setIsListening(false);
-          isListeningRef.current = false;
-          if (silenceTimerRef.current) {
-            clearTimeout(silenceTimerRef.current);
-            silenceTimerRef.current = null;
-          }
-          setIsSilenceCountdown(false);
-        }
-      };
-
-      recognition.onend = () => {
-        if (!isListeningRef.current) return;
-
-        const text = liveTranscriptRef.current.trim();
-
-        if (!text || autoSentRef.current) return;
-
-        if (silenceTimerRef.current) {
-          clearTimeout(silenceTimerRef.current);
-        }
-
-        silenceTimerRef.current = setTimeout(() => {
-          if (autoSentRef.current) return;
-
-          autoSentRef.current = true;
-          setIsSilenceCountdown(false);
-
-          void stopVoiceRecordingAndSend();
-        }, 800);
-      };
-
-      recognitionRef.current = recognition;
-    } catch (e) {
-      console.warn("Falha ao instanciar SpeechRecognition:", e);
-    }
-
     return () => {
       if (silenceTimerRef.current) {
         clearTimeout(silenceTimerRef.current);
         silenceTimerRef.current = null;
       }
-      if (recognition) {
+      if (recognitionRef.current) {
         try {
-          recognition.abort();
+          recognitionRef.current.onend = null;
+          recognitionRef.current.onerror = null;
+          recognitionRef.current.onresult = null;
+          recognitionRef.current.abort();
         } catch {
           // ignore
         }
+        recognitionRef.current = null;
       }
     };
   }, []);
 
-  // Listener para Wake Word ("KIA") e comandos imediatos
+  // Listener para Wake Word ("KIA") e comandos de voz
   useEffect(() => {
     const handleWakeStart = () => {
       if (!isListeningRef.current && !isProcessingRef.current && !getIsSpeaking() && !isSpeakingLiveRef.current) {
@@ -479,12 +444,8 @@ export const KiaChatView: React.FC = () => {
     };
     window.addEventListener("kia-start-voice-recording", handleWakeStart);
 
-    // Subscrição direta no detector de wake-word ("KIA", "Ei KIA", "Olá KIA", "Ok KIA")
     const unsubscribeWake = wakeWordDetector.subscribe((event) => {
-      // Ignora ativação se a KIA estiver ativamente a falar (TTS)
-      if (getIsSpeaking() || isSpeakingLiveRef.current) {
-        return;
-      }
+      if (getIsSpeaking() || isSpeakingLiveRef.current) return;
       if (event.isImmediateCommand && event.commandText && event.commandText.length >= 2) {
         if (!isProcessingRef.current && !autoSentRef.current) {
           autoSentRef.current = true;
@@ -503,6 +464,7 @@ export const KiaChatView: React.FC = () => {
     };
   }, []);
 
+  // Via Única e Estável de Microfone: Criação sob demanda, sem flapping e sem loops concorrentes
   const startVoiceRecording = () => {
     stopTtsAudio();
     setIsSpeakingLive(false);
@@ -514,22 +476,111 @@ export const KiaChatView: React.FC = () => {
       silenceTimerRef.current = null;
     }
 
+    // Se já houver uma instância ativa, encerra-a limpa antes de criar uma nova
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.onend = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.onresult = null;
+        recognitionRef.current.abort();
+      } catch {}
+      recognitionRef.current = null;
+    }
+
+    const SpeechRecognitionClass =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognitionClass) {
+      console.warn("Navegador não suporta a Web Speech API de microfone.");
+      return;
+    }
+
     setLiveTranscript("");
     liveTranscriptRef.current = "";
     speechDetectedRef.current = false;
     autoSentRef.current = false;
     setIsSilenceCountdown(false);
 
-    setIsListening(true);
-    isListeningRef.current = true;
-
     try {
-      if (recognitionRef.current) {
-        recognitionRef.current.start();
-      }
-      playSfx("click", 0.3);
+      const rec = new SpeechRecognitionClass();
+      rec.continuous = true;
+      rec.interimResults = true;
+      rec.lang = "pt-PT";
+      rec.maxAlternatives = 1;
+
+      rec.onstart = () => {
+        setIsListening(true);
+        isListeningRef.current = true;
+        playSfx("click", 0.25);
+      };
+
+      rec.onresult = (event: any) => {
+        let finalStr = "";
+        let interimStr = "";
+
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const result = event.results[i];
+          const transcript = result?.[0]?.transcript || "";
+          if (!transcript.trim()) continue;
+
+          if (result.isFinal) {
+            finalStr += transcript + " ";
+          } else {
+            interimStr += transcript;
+          }
+        }
+
+        const combined = `${finalStr}${interimStr}`.trim();
+        if (!combined) return;
+
+        liveTranscriptRef.current = combined;
+        setLiveTranscript(combined);
+        speechDetectedRef.current = true;
+
+        if (silenceTimerRef.current) {
+          clearTimeout(silenceTimerRef.current);
+          silenceTimerRef.current = null;
+        }
+
+        // Auto-envio inteligente após 1.6 segundos de silêncio contínuo
+        silenceTimerRef.current = setTimeout(() => {
+          if (!autoSentRef.current && liveTranscriptRef.current.trim().length >= 2) {
+            autoSentRef.current = true;
+            void stopVoiceRecordingAndSend();
+          }
+        }, 1600);
+      };
+
+      rec.onerror = (err: any) => {
+        const errorType = err?.error;
+        if (errorType === "not-allowed" || errorType === "service-not-allowed") {
+          setIsListening(false);
+          isListeningRef.current = false;
+          if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current);
+            silenceTimerRef.current = null;
+          }
+          setIsSilenceCountdown(false);
+        }
+      };
+
+      rec.onend = () => {
+        // Finalização natural
+        if (isListeningRef.current && liveTranscriptRef.current.trim().length >= 2 && !autoSentRef.current) {
+          autoSentRef.current = true;
+          void stopVoiceRecordingAndSend();
+        } else {
+          setIsListening(false);
+          isListeningRef.current = false;
+        }
+      };
+
+      rec.start();
+      recognitionRef.current = rec;
     } catch (e) {
-      console.warn("Início de reconhecimento:", e);
+      console.warn("Erro ao iniciar gravação de microfone:", e);
+      setIsListening(false);
+      isListeningRef.current = false;
     }
   };
 
@@ -547,12 +598,14 @@ export const KiaChatView: React.FC = () => {
     speechDetectedRef.current = false;
     autoSentRef.current = false;
 
-    try {
-      if (recognitionRef.current) {
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.onend = null;
+        recognitionRef.current.onerror = null;
+        recognitionRef.current.onresult = null;
         recognitionRef.current.stop();
-      }
-    } catch {
-      // ignore
+      } catch {}
+      recognitionRef.current = null;
     }
 
     wakeWordDetector.resumeAfterActiveInput();
@@ -691,6 +744,7 @@ export const KiaChatView: React.FC = () => {
               userRole: activeRole,
               userName: currentUser.name,
               maxOutputTokens: 4096,
+              personaConfig,
               contextData: {
                 tasksCount: tasks.length,
                 knowledgeCount: knowledge.length,
@@ -785,6 +839,7 @@ export const KiaChatView: React.FC = () => {
                 userRole: activeRole,
                 userName: currentUser.name,
                 maxOutputTokens: 4096,
+                personaConfig,
                 contextData: {
                   tasksCount: tasks.length,
                   knowledgeCount: knowledge.length,
@@ -888,7 +943,8 @@ export const KiaChatView: React.FC = () => {
       // Handle TTS if configured
       if (!ttsMuted && systemSettings.autoAudioTts && accumulatedContent) {
         setSpeakingMsgId(assistantMsgId);
-        speakNaturalText(accumulatedContent, {
+        const cleanAccumulated = accumulatedContent.replace(/<interpretacao>[\s\S]*?<\/interpretacao>/gi, "").trim();
+        speakNaturalText(cleanAccumulated || accumulatedContent, {
           voiceName: systemSettings.voiceName || "Kore",
           engine: "auto",
           onStart: () => setSpeakingMsgId(assistantMsgId),
@@ -997,6 +1053,20 @@ export const KiaChatView: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0 self-start sm:self-center">
+            {/* Persona Configurator Button */}
+            <button
+              id="kia-persona-config-trigger"
+              onClick={() => setIsPersonaModalOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 text-amber-300 text-xs font-medium transition-all shadow-sm group"
+              title="Configurar Persona, Tom e Regras Anti-Robô da KIA"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-400 group-hover:rotate-12 transition-transform" />
+              <span className="hidden sm:inline font-semibold">Persona</span>
+              <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-200 border border-amber-400/30">
+                {personaConfig.tone}
+              </span>
+            </button>
+
             <button
               onClick={toggleTtsMute}
               className={`p-2 rounded-xl border transition-all ${
@@ -1047,6 +1117,12 @@ export const KiaChatView: React.FC = () => {
         ) : (
           chatMessages.map((msg) => {
             const isUser = msg.role === "user";
+            const { interpretation, isInterpreting, cleanContent } = !isUser
+              ? parseKiaInterpretation(msg.content)
+              : { interpretation: "", isInterpreting: false, cleanContent: msg.content };
+
+            const textToCopy = isUser ? msg.content : (cleanContent || msg.content);
+            const textToSpeak = isUser ? msg.content : (cleanContent || msg.content);
 
             return (
               <div
@@ -1064,7 +1140,7 @@ export const KiaChatView: React.FC = () => {
                   <div className="absolute top-2 right-2 flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     {!isUser && (
                       <button
-                        onClick={() => handleToggleSpeakMessage(msg.id, msg.content)}
+                        onClick={() => handleToggleSpeakMessage(msg.id, textToSpeak)}
                         className={`p-1 rounded-md transition-all ${
                           speakingMsgId === msg.id
                             ? "bg-amber-500/30 text-amber-300 !opacity-100 ring-1 ring-amber-400/50"
@@ -1080,7 +1156,7 @@ export const KiaChatView: React.FC = () => {
                       </button>
                     )}
                     <button
-                      onClick={() => copyToClipboard(msg.content, msg.id)}
+                      onClick={() => copyToClipboard(textToCopy, msg.id)}
                       className="p-1 rounded-md bg-black/40 text-slate-400 hover:text-white transition-all"
                       title="Copiar texto"
                     >
@@ -1092,9 +1168,50 @@ export const KiaChatView: React.FC = () => {
                     </button>
                   </div>
 
+                  {/* Real-time Cognitive Strategic Interpretation Header / Badge */}
+                  {!isUser && isInterpreting && (
+                    <div className="mb-3 p-3 rounded-xl bg-purple-950/40 border border-purple-800/60 text-purple-200 animate-fadeIn shadow-sm">
+                      <div className="flex items-center gap-2 text-xs font-bold text-purple-300 mb-1.5">
+                        <Brain className="w-4 h-4 text-purple-400 animate-pulse shrink-0" />
+                        <span>A interpretar intenção estratégica & contexto...</span>
+                      </div>
+                      <p className="text-xs italic text-purple-200/90 leading-relaxed font-sans pl-6">
+                        "{interpretation || "A analisar as entrelinhas e objetivos de Josemar Gourgel..."}"
+                        <span className="inline-block w-1.5 h-3.5 ml-1 bg-purple-400 animate-pulse align-middle" />
+                      </p>
+                    </div>
+                  )}
+
+                  {!isUser && !isInterpreting && interpretation && personaConfig.showInterpretationBadge !== false && (
+                    <div className="mb-3 rounded-xl bg-purple-950/30 border border-purple-800/40 p-2.5 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => toggleInterpretationCollapse(msg.id)}
+                        className="w-full flex items-center justify-between text-left font-bold text-[11px] text-purple-300 hover:text-purple-200 transition-colors"
+                      >
+                        <span className="flex items-center gap-1.5">
+                          <Brain className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                          <span className="tracking-wide uppercase text-[10px] text-purple-400 font-black">
+                            Leitura Estratégica Prévia
+                          </span>
+                        </span>
+                        <span className="text-[10px] text-purple-400 hover:underline">
+                          {collapsedInterpretations[msg.id] ? "Ver interpretação" : "Ocultar"}
+                        </span>
+                      </button>
+                      {!collapsedInterpretations[msg.id] && (
+                        <div className="mt-2 text-xs text-purple-200/90 italic leading-relaxed border-t border-purple-900/40 pt-2 font-sans pl-1">
+                          "{interpretation}"
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <p className="whitespace-pre-wrap break-words">
-                    {msg.content}
-                    {msg.isStreaming && (
+                    {isUser
+                      ? msg.content
+                      : (cleanContent || (isInterpreting ? "" : msg.content))}
+                    {msg.isStreaming && !isInterpreting && (
                       <span className="inline-block w-1.5 h-4 ml-1 bg-amber-400 animate-pulse align-middle" />
                     )}
                   </p>
@@ -1351,6 +1468,17 @@ export const KiaChatView: React.FC = () => {
           </button>
         </form>
       </div>
+
+      {/* Modal de Configuração de Persona & Anti-Robô */}
+      <KiaPersonaModal
+        isOpen={isPersonaModalOpen}
+        onClose={() => setIsPersonaModalOpen(false)}
+        currentConfig={personaConfig}
+        onSave={(newCfg) => {
+          setPersonaConfig(newCfg);
+          savePersonaConfig(newCfg);
+        }}
+      />
     </div>
   );
 };

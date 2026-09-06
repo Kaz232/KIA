@@ -438,11 +438,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         ) {
           parsed.aiModel = "gemini-3.1-flash-lite";
         }
+        // Prevent background mic loops from older saved localStorage settings
+        parsed.wakeWordEnabled = false;
+        parsed.voiceContinuous = false;
         return {
           ...parsed,
           supabaseConfigured: supabaseCfg.isConfigured,
           supabaseUrl: supabaseCfg.url,
           supabaseAnonKey: supabaseCfg.anonKey,
+          wakeWordEnabled: false,
+          voiceContinuous: false,
         };
       } catch {
         // Fallback to default
@@ -458,12 +463,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       brandName: "GAG Visual",
       autoAudioTts: true,
       voiceName: "Kore",
-      voiceContinuous: true,
+      voiceContinuous: false,
       voiceVadEnabled: true,
-      voiceSilenceDelayMs: 800,
-      wakeWordEnabled: true,
+      voiceSilenceDelayMs: 1200,
+      wakeWordEnabled: false,
       wakeWordTriggerPhrase: "kia",
-      wakeWordSoundFeedback: true,
+      wakeWordSoundFeedback: false,
       wakeWordAutoSubmitCommand: true,
     };
   });

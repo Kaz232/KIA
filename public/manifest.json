@@ -1,6 +1,6 @@
 {
-  "name": "GAG Core — GAG Visual OS",
-  "short_name": "GAG Core",
+  "name": "GAG Visual Core OS",
+  "short_name": "GAG Visual",
   "description": "Sistema Operacional Inteligente & Gestão de Marca da GAG Visual",
   "start_url": "/",
   "display": "standalone",

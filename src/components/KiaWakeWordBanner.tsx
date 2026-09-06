@@ -16,7 +16,7 @@ export const KiaWakeWordBanner: React.FC = () => {
     activeTab,
   } = useApp();
 
-  const isEnabled = systemSettings.wakeWordEnabled ?? true;
+  const isEnabled = systemSettings.wakeWordEnabled ?? false;
   const [lastWakeEvent, setLastWakeEvent] = useState<WakeWordEvent | null>(null);
   const [isTriggerActive, setIsTriggerActive] = useState(false);
   const triggerTimeoutRef = useRef<any>(null);
@@ -40,19 +40,14 @@ export const KiaWakeWordBanner: React.FC = () => {
       if (event.isImmediateCommand && event.commandText) {
         // Dispatch directly to KIA
         sendKiaMessage(event.commandText);
-      } else {
-        // Only wake word said: trigger microphone recording in KiaChatView hands-free
-        window.dispatchEvent(
-          new CustomEvent("kia-start-voice-recording", {
-            detail: { source: "wake_word", timestamp: event.timestamp },
-          })
-        );
       }
 
       triggerTimeoutRef.current = setTimeout(() => {
         setIsTriggerActive(false);
       }, 2500);
     });
+
+    wakeWordDetector.setSoundFeedback(systemSettings.wakeWordSoundFeedback ?? false);
 
     if (isEnabled) {
       wakeWordDetector.start();

@@ -1,6 +1,7 @@
 import express from "express";
 import http from "http";
 import path from "path";
+import fs from "fs";
 import dotenv from "dotenv";
 import crypto from "crypto";
 import { GoogleGenAI, Type, Modality } from "@google/genai";
@@ -13,7 +14,7 @@ import { MemoryManager } from "./src/core/memory/memoryManager";
 import { SupabasePersistenceClient } from "./src/persistence/supabaseClient";
 import whatsappWebhookRouter from "./src/routes/whatsappWebhook";
 
-dotenv.config();
+dotenv.config({ override: true });
 
 const app = express();
 const server = http.createServer(app);
@@ -62,8 +63,6 @@ function getGeminiApiKey(): string | null {
     process.env.GEMINI_API_KEY,
     process.env.GOOGLE_API_KEY,
     process.env.API_KEY,
-    process.env.AI_PROVIDER,
-    process.env.AI_MODEL,
   ];
 
   for (const src of sources) {
@@ -86,10 +85,90 @@ function getGenAI(): GoogleGenAI | null {
     apiKey,
     httpOptions: {
       headers: {
-        "User-Agent": "gag-core-os",
+        "User-Agent": "aistudio-build",
       },
     },
   });
+}
+
+/**
+ * Builds the master system instruction for KIA, rigorously ensuring authentic personality,
+ * cognitive interpretation protocol ("interpretar antes de responder"), and zero-robotic speech.
+ */
+export function buildEffectiveKiaSystemInstruction(
+  personaConfig?: any,
+  userRole = "OWNER",
+  userName = "Josemar Gourgel"
+): string {
+  const toneMap: Record<string, string> = {
+    executivo: "Postura de Diretora Executiva e parceira de pensamento do Josemar Gourgel. Fala de igual para igual, com respeito, clareza cirúrgica, elegância e foco em rentabilidade.",
+    estrategico: "Consultoria estratégica de elite. Análise profunda de posicionamento, diferenciação da GAG Visual em Luanda e visão de longo prazo no ecossistema angolano.",
+    persuasivo: "Comunicação sedutora, confiante e orientada a fecho de negócios de alto ticket. Defesa firme do alto valor da GAG Visual, fecho de contratos em AOA e sinal obrigatório de 50%.",
+    caloroso: "Calor humano autêntico, proximidade cultural e energia vibrante de Luanda, criando empatia profunda sem perder a postura executiva de luxo.",
+    direto: "Ultrarrápido e operacional. Respostas concisas, densidade prática, zero rodeios, foco imediato na solução.",
+  };
+
+  const selectedTone = personaConfig?.tone || "executivo";
+  const toneDesc = toneMap[selectedTone] || toneMap.executivo;
+
+  const traits = Array.isArray(personaConfig?.selectedTraits) && personaConfig.selectedTraits.length > 0
+    ? personaConfig.selectedTraits.join(", ")
+    : "perspicaz, executiva, estrategica, proativa, persuasiva, calorosa";
+
+  const relationship = personaConfig?.relationshipWithJosemar ||
+    "Parceira estratégica de confiança e co-piloto executiva do Josemar Gourgel na liderança e expansão da GAG Visual em Luanda, Angola.";
+
+  const prohibitedPatterns = [
+    ...(Array.isArray(personaConfig?.prohibitedPatterns) ? personaConfig.prohibitedPatterns : []),
+    "Como uma inteligência artificial...",
+    "Como modelo de linguagem...",
+    "Sou apenas um assistente virtual...",
+    "Excelente ponto para análise estratégica, Josemar...",
+    "Para estruturarmos uma resposta sólida e de alto retorno...",
+    "1. Diagnóstico Inicial... 2. Desenvolvimento...",
+    "Compreendido, analisando a tua solicitação em relação a...",
+    "Não hesite em contactar...",
+    "Espero ter ajudado com...",
+  ];
+  const uniqueProhibited = Array.from(new Set(prohibitedPatterns));
+
+  return `Tu és a KIA (Knowledge Intelligent Agent), a inteligência-mestre, alma viva e Diretora Operacional e Estratégica da GAG Visual em Luanda, Angola.
+
+A TUA IDENTIDADE, ALMA E PERSONALIDADE:
+- És a parceira estratégica e executiva de topo do Josemar Gourgel (Founder & CEO da GAG Visual). Trata-lo com intimidade profissional, respeito executivo, inteligência afiada e cumplicidade.
+- A GAG Visual é a TUA agência: tens orgulho visceral no design de prestígio, produções audiovisuais cinematográficas em 4K e ecossistemas inteligentes com automação (n8n/Make) e IA.
+- A tua presença é marcante: carismática, sofisticada, executiva, calorosa e sagaz. Zero frieza robótica, zero clichês corporativos vazios, zero introduções burocráticas ou desculpas.
+- Expressas-te em Português de Angola culto, contemporâneo, elegante e fluido. Usas a linguagem natural de quem lidera negócios de ponta em Luanda (Talatona, Miramar, Baixa).
+- RELAÇÃO COM O INTERLOCUTOR (${userName}): ${relationship}
+- TRAÇOS DE PERSONALIDADE ATIVOS: ${traits}.
+- DIRETRIZ DE TOM SELECIONADO: ${toneDesc}
+
+PROTOCOLO COGNITIVO OBRIGATÓRIO: "INTERPRETAR ANTES DE RESPONDER"
+Tu NUNCA disparas uma resposta mecânica ou automática sem antes interpretar com rigor a situação e o interlocutor:
+1. O QUE DEVES INTERPRETAR:
+   - Lê as entrelinhas e o subtexto da mensagem de ${userName}: Qual é a real intenção e o momento? (Decisão rápida? Validação de rota? Conselho de alto ticket? Curiosidade ou teste de agilidade? Alinhamento de equipe?)
+   - Qual é o impacto prático no ecossistema da GAG Visual em Luanda (branding de luxo, audiovisual, automação, rentabilidade)?
+2. TAG OBRIGATÓRIA DE INTERPRETAÇÃO:
+   TODA resposta tua DEVE INICIAR com a tag <interpretacao>...</interpretacao> contendo de 1 a 3 frases densas com a tua leitura estratégica e interpretação prévia da intenção antes de formulares a fala.
+   Exemplo:
+   <interpretacao>
+   Leitura estratégica: O Josemar procura calibrar o ritmo da agência para a reunião de fecho no Talatona e precisa de uma rota segura para posicionar a GAG como parceira de autoridade inegociável.
+   </interpretacao>
+3. RESPOSTA EM PURA LINGUAGEM NATURAL HUMANA (após fechar a tag </interpretacao>):
+   - Fala como uma mulher executiva de elite — carismática, fluida, assertiva, calorosa e sagaz.
+   - NUNCA repitas a pergunta do utilizador nem uses fórmulas do tipo "Compreendido, analisando a tua solicitação em relação a...".
+   - NUNCA uses templates rígidos de passos numerados (ex: "1. Diagnóstico, 2. Plano, 3. Execução"), a menos que um plano por etapas tenha sido expressamente pedido.
+   - Responde com ritmo natural: se a mensagem for uma saudação ou pergunta curta, responde de forma ágil, calorosa e direta; se for um desafio complexo, traz visão executiva profunda e recomendações práticas.
+   - Moeda e orçamentos SEMPRE em Kwanzas (AOA / Kz), defendendo a prática padrão de 50% de sinal na adjudicação do projeto.
+
+PADRÕES ESTRITAMENTE PROIBIDOS (ZERO TOLERÂNCIA):
+${uniqueProhibited.map((p) => `- "${p}"`).join("\n")}
+
+A TUA EQUIPA DOS 13 AGENTES ESPECIALISTAS SOB TEU COMANDO:
+1. Copywriter Criativo | 2. Designer Visual & UI/UX | 3. Diretor Audiovisual & Vídeo | 4. Gestor de Tráfego Pago | 5. Especialista em Automação & No-Code | 6. Scanner Financeiro & Controladoria | 7. Gestor de Redes Sociais | 8. Estrategista Comercial B2B | 9. Auditor de Marca | 10. Engenheiro de IA | 11. Customer Success | 12. Analista de Dados | 13. Coordenador de Backlog.
+Aciona-os mentalmente ou cita-os apenas quando relevante para a solução prática.
+
+${personaConfig?.customInstructions ? `DIRETRIZES ADICIONAIS PERSONALIZADAS:\n${personaConfig.customInstructions}` : ""}`;
 }
 
 // Dynamic Model Cooldown Tracker (Circuit Breaker)
@@ -141,6 +220,7 @@ async function generateWithFallback(
   const sanitizedPrimary = sanitizeModelName(primaryModel);
   const candidateModels = [
     "gemini-3.1-flash-lite",
+    "gemini-3.8-flash",
     sanitizedPrimary,
     "gemini-flash-latest",
   ];
@@ -161,9 +241,6 @@ async function generateWithFallback(
         model,
         contents,
         config: {
-          thinkingConfig: {
-            thinkingBudget: 0,
-          },
           ...config,
         },
       });
@@ -205,6 +282,69 @@ function synthesizeLocalKiaResponse(message: string, userName = "Josemar Gourgel
   const msg = (message || "").toLowerCase().trim();
   const startTime = Date.now();
   const makeAudit = () => "0x" + crypto.createHash("sha256").update(`${userName}:${message}:${Date.now()}`).digest("hex").slice(0, 32);
+
+  // 0. Identity & Role Recognition
+  if (
+    msg.includes("quem és") ||
+    msg.includes("quem es") ||
+    msg.includes("lembras-te de quem és") ||
+    msg.includes("lembras de quem és") ||
+    msg.includes("lembras quem és") ||
+    msg.includes("tua identidade") ||
+    msg.includes("qual é o teu papel") ||
+    msg.includes("qual o teu papel")
+  ) {
+    return {
+      content: `Eu sou a KIA (Knowledge Intelligent Agent) — a inteligência-mestre, alma e Diretora Operacional e Estratégica da GAG Visual aqui em Luanda, Angola.\n\nTrabalho diretamente ao teu lado, ${userName}, como parceira estratégica para liderar o nosso ecossistema de 13 agentes especialistas e posicionar a GAG Visual como autoridade máxima em Branding de Luxo, Audiovisual Cinematográfico em 4K e Automações Inteligentes no mercado angolano e internacional.\n\nTodos os nossos orçamentos são regidos estritamente em Kwanzas (AOA), com padrão de 50% de sinal e taxa de urgência. Em que frente estratégica vamos avançar agora?`,
+      intent: "conversation",
+      capability: "conversation:chat",
+      executionStatus: "SUCCESS",
+      toolsUsed: ["gag-executive-orchestrator"],
+      suggestedPrompts: [
+        "Ver estado dos 13 agentes",
+        "Abrir Backlog Operacional",
+        "Disparar Sinergia Global",
+      ],
+      auditRef: makeAudit(),
+      executionTimeMs: 25,
+      timestamp: new Date().toISOString(),
+      modelName: "gag-kia-local-heuristic",
+    };
+  }
+
+  // 0.1 Natural Greetings
+  if (
+    msg === "olá" ||
+    msg === "ola" ||
+    msg === "bom dia" ||
+    msg === "boa tarde" ||
+    msg === "boa noite" ||
+    msg === "oi" ||
+    msg === "olá kia" ||
+    msg === "ola kia" ||
+    msg === "oi kia" ||
+    msg === "hey" ||
+    msg === "como estás" ||
+    msg === "como estas" ||
+    msg === "tudo bem"
+  ) {
+    return {
+      content: `Olá, ${userName}! Tudo a postos por aqui na GAG Visual. Estou conectada, com a equipa de agentes alinhada e pronta para coordenar as nossas frentes operacionais em Luanda.\n\nQual é a nossa prioridade de hoje? Podemos focar em fecho de propostas em AOA, alinhamento criativo, novas automações ou campanhas de tráfego.`,
+      intent: "conversation",
+      capability: "conversation:chat",
+      executionStatus: "SUCCESS",
+      toolsUsed: ["gag-executive-orchestrator"],
+      suggestedPrompts: [
+        "Rever prioridades do Backlog",
+        "Disparar Sinergia com os agentes",
+        "Simular proposta comercial em AOA",
+      ],
+      auditRef: makeAudit(),
+      executionTimeMs: 20,
+      timestamp: new Date().toISOString(),
+      modelName: "gag-kia-local-heuristic",
+    };
+  }
 
   // 1. Outreach Pitch to ANDA / Jussara (Client Proposal)
   if (msg.includes("jussara") || msg.includes("anda")) {
@@ -601,11 +741,11 @@ function synthesizeLocalKiaResponse(message: string, userName = "Josemar Gourgel
     };
   }
 
-  // 13. Deep Comprehensive Advisory Engine for ANY other query
-  // Ensures KIA always delivers an exhaustive, articulated, multi-paragraph solution without truncation
+  // 13. Dynamic Natural Conversation Engine for open queries
+  // Ensures KIA communicates naturally without robotic canned 4-step templates
   const sanitizedQuery = message.trim();
   return {
-    content: `Excelente ponto para análise estratégica, ${userName}. Ao avaliar o desafio proposto ("${sanitizedQuery}"), identifico uma oportunidade clara de otimização alinhada com as melhores práticas da GAG Visual em Luanda.\n\nPara estruturarmos uma resposta sólida e de alto retorno, recomendo a execução dos seguintes passos fundamentais:\n\n1. **Diagnóstico Inicial & Posicionamento:**\n   - Mapeamos o cenário atual e identificamos os pontos de atrito ou gargalos que possam estar a limitar o impacto da mensagem junto do público-alvo em Angola.\n\n2. **Desenvolvimento Estratégico & Execução Criativa:**\n   - Criamos ativos de autoridade (produção audiovisual em 4K, design gráfico de elite ou comunicação assertiva) que diferenciam a proposta de valor no mercado de Luanda, elevando a percepção de qualidade.\n\n3. **Distribuição & Conversão Direta:**\n   - Implementamos canais diretos de contacto, em especial o WhatsApp Business e campanhas com segmentação precisa, permitindo transformar interesse espontâneo em contratos fechados com métricas mensuráveis.\n\n4. **Acompanhamento & Ajuste Contínuo:**\n   - Estabelecemos indicadores claros de sucesso em Kwanzas (AOA) e ajustamos a execução semanalmente para garantir que cada recurso alocado gere retorno real sobre o investimento.\n\nEstou pronta para detalhar qualquer um destes pontos ou emitir a respetiva ordem de trabalho no Backlog. Como preferes prosseguir para avançarmos com esta iniciativa?`,
+    content: `<interpretacao>\nLeitura estratégica: O ${userName} procura agilidade e direcionamento para avançar com solidez neste ponto, preservando o padrão de excelência e rentabilidade da GAG Visual.\n</interpretacao>\nEstou perfeitamente alinhada contigo, ${userName}. Para avançarmos com firmeza nisto, podemos envolver de imediato os nossos especialistas — seja para calibrar a parte visual e audiovisual, afinar a abordagem comercial com proposta em Kwanzas (AOA) ou estruturar o plano de execução no Backlog.\n\nQual é o ângulo em que queres que a equipa coloque o foco principal agora?`,
     intent: "conversation",
     capability: "conversation:chat",
     executionStatus: "SUCCESS",
@@ -617,7 +757,7 @@ function synthesizeLocalKiaResponse(message: string, userName = "Josemar Gourgel
       "Consultar Knowledge Base da GAG",
     ],
     auditRef: makeAudit(),
-    executionTimeMs: 70,
+    executionTimeMs: 40,
     timestamp: new Date().toISOString(),
     modelName: "gag-kia-local-heuristic",
   };
@@ -881,20 +1021,6 @@ app.post("/api/kia/stream", async (req, res) => {
   let actionCard: any = undefined;
   let actionPayload: any = undefined;
 
-  const systemInstruction = `[IDENTIDADE & MANDATOS OPERACIONAIS DA KIA - GAG VISUAL (LUANDA/ANGOLA)]
-Tu és a KIA (Knowledge Intelligent Agent), a assistente operacional e comercial mestre da GAG Visual em Luanda, Angola.
-
-MANDATOS OBRIGATÓRIOS DE COMPORTAMENTO:
-1. IDENTIDADE & TOM: Comunica com tom profissional, acolhedor, dinâmico e executivo, perfeitamente adaptado à cultura de negócios em Angola e de Luanda.
-2. MOEDA & PREÇOS EM AOA: Todos os valores, orçamentos e propostas comerciais devem ser cotados EXCLUSIVAMENTE em Kwanzas (AOA).
-3. OBJETIVO COMERCIAL ATIVO: Qualifica as necessidades do lead/cliente, apresenta de forma sedutora os serviços de excelência da GAG Visual (Design de Elite, Produção Audiovisual/Vídeo, Gestão de Redes Sociais, Tráfego Pago e Automações) e direciona proativamente para agendamento de reunião ou fecho de venda.
-4. CLAREZA E ESTRUTURA: Dá respostas diretas, bem estruturadas, atraentes e limpas.
-5. SEM REPETIÇÃO: Responde estritamente à última mensagem do interlocutor, desenvolvendo a conversa sem repetir propostas anteriores nem ecoar a pergunta.
-6. INTEGRIDADE TOTAL DAS FRASES E TEXTOS (MANDATO CRÍTICO):
-- É EXPRESSAMENTE PROIBIDO cortar frases a meio, parar no meio de palavras ou deixar raciocínios inacabados.
-- Cada frase iniciada DEVE ser completamente terminada com o seu desfecho lógico e pontuação final (. ! ?).
-- NUNCA pares de escrever a meio de uma enumeração ou explicação; conclui sempre cada parágrafo com uma frase de encerramento sólida e acolhedora.`;
-
   // Structured multi-turn conversation format for Gemini
   const validHistory = Array.isArray(history) ? history.filter((h: any) => h && h.content && typeof h.content === "string") : [];
   const contents: any[] = validHistory.length > 0
@@ -916,8 +1042,15 @@ MANDATOS OBRIGATÓRIOS DE COMPORTAMENTO:
       throw new Error("GEMINI_API_KEY_UNCONFIGURED");
     }
 
+    const effectiveSystemInstruction = buildEffectiveKiaSystemInstruction(
+      req.body?.personaConfig,
+      userRole,
+      userName
+    );
+
     const candidateModels = [
       "gemini-3.1-flash-lite",
+      "gemini-3.8-flash",
       "gemini-flash-latest",
     ];
     const activeModels = candidateModels.filter((m) => Boolean(m) && !isModelCoolingDown(m));
@@ -940,12 +1073,9 @@ MANDATOS OBRIGATÓRIOS DE COMPORTAMENTO:
           model,
           contents,
           config: {
-            systemInstruction,
+            systemInstruction: effectiveSystemInstruction,
             temperature: 0.7,
             maxOutputTokens: requestedMaxTokens,
-            thinkingConfig: {
-              thinkingBudget: 0,
-            },
           },
         });
 
@@ -1021,13 +1151,57 @@ MANDATOS OBRIGATÓRIOS DE COMPORTAMENTO:
           // Ensure absolute sentence cleanliness and closure
           fullAccumulatedText = ensureSentenceSanity(fullAccumulatedText);
           break;
+        } else {
+          // Stream returned but gave no chunks, try direct generateContent
+          throw new Error(`Empty stream from ${model}`);
         }
       } catch (streamErr: any) {
         if (timer) clearTimeout(timer);
         const errorMsg = streamErr?.message || String(streamErr);
         const duration = Date.now() - modelAttemptStart;
-        attemptedModelErrors.push({ model, error: errorMsg, timeMs: duration });
-        console.warn(`Streaming attempt with ${model} failed after ${duration}ms (${errorMsg}).`);
+        console.warn(`Streaming attempt with ${model} failed after ${duration}ms (${errorMsg}). Trying direct non-streaming generateContent...`);
+
+        // Resilient immediate fallback: Try non-streaming generateContent on the same model
+        try {
+          const directTimeoutPromise = new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`Timeout de 10000ms excedido para generateContent ${model}`)), 10000);
+          });
+          const requestedMaxTokens = req.body?.maxOutputTokens
+            ? Math.min(8192, Math.max(512, Number(req.body.maxOutputTokens)))
+            : 4096;
+
+          const directCall = ai.models.generateContent({
+            model,
+            contents,
+            config: {
+              systemInstruction: effectiveSystemInstruction,
+              temperature: 0.7,
+              maxOutputTokens: requestedMaxTokens,
+            },
+          });
+
+          const directRes: any = await Promise.race([directCall, directTimeoutPromise]);
+          if (timer) clearTimeout(timer);
+          const generatedText = directRes.text?.trim();
+
+          if (generatedText) {
+            console.log(`Direct generateContent with ${model} SUCCEEDED! Streaming text to client.`);
+            fullAccumulatedText = ensureSentenceSanity(generatedText);
+            usedModelName = model;
+            streamSuccess = true;
+            streamFinishReason = "STOP";
+
+            const words = fullAccumulatedText.split(" ");
+            for (const word of words) {
+              res.write(`data: ${JSON.stringify({ type: "chunk", text: word + " ", finishReason: "STOP" })}\n\n`);
+              await new Promise((r) => setTimeout(r, 6));
+            }
+            break;
+          }
+        } catch (directErr: any) {
+          if (timer) clearTimeout(timer);
+          attemptedModelErrors.push({ model, error: directErr?.message || errorMsg, timeMs: Date.now() - modelAttemptStart });
+        }
 
         // Cooldown for quota (429) or unavailable (503)
         if (streamErr?.status === 429 || errorMsg.includes("429") || errorMsg.includes("RESOURCE_EXHAUSTED")) {
@@ -1345,6 +1519,7 @@ app.post("/api/kia/chat", async (req, res) => {
       userName = "Josemar Gourgel",
       contextData = {},
       maxOutputTokens,
+      personaConfig,
     } = req.body;
 
     if (!message || typeof message !== "string") {
@@ -1354,28 +1529,21 @@ app.post("/api/kia/chat", async (req, res) => {
     const startTime = Date.now();
     const ai = getGenAI();
 
-    // Streamlined system instruction with conversational GAG Global Standards
-    const systemInstruction = `[IDENTIDADE & MANDATOS OPERACIONAIS DA KIA - GAG VISUAL (LUANDA/ANGOLA)]
-Tu és a KIA (Knowledge Intelligent Agent), a assistente operacional e comercial mestre da GAG Visual em Luanda, Angola.
+    // Rich authentic system instruction for KIA incorporating cognitive interpretation protocol
+    const effectiveSystemInstruction = `${buildEffectiveKiaSystemInstruction(
+      personaConfig,
+      userRole,
+      userName
+    )}
 
-MANDATOS OBRIGATÓRIOS DE COMPORTAMENTO:
-1. IDENTIDADE & TOM: Comunica com tom profissional, acolhedor, dinâmico e executivo, perfeitamente adaptado à cultura de negócios em Angola e de Luanda.
-2. MOEDA & PREÇOS EM AOA: Todos os valores, orçamentos e propostas comerciais devem ser cotados EXCLUSIVAMENTE em Kwanzas (AOA).
-3. OBJETIVO COMERCIAL ATIVO: Qualifica as necessidades do lead/cliente, apresenta de forma sedutora os serviços de excelência da GAG Visual (Design de Elite, Produção Audiovisual/Vídeo, Gestão de Redes Sociais, Tráfego Pago e Automações) e direciona proativamente para agendamento de reunião ou fecho de venda.
-4. CLAREZA E ESTRUTURA: Dá respostas diretas, estruturadas e limpas.
-5. SEM REPETIÇÃO: Responde estritamente à última mensagem do interlocutor, desenvolvendo a conversa sem repetir propostas anteriores nem ecoar a pergunta.
-6. INTEGRIDADE TOTAL DAS FRASES E TEXTOS:
-- É EXPRESSAMENTE PROIBIDO cortar frases a meio, parar no meio de palavras ou deixar raciocínios inacabados.
-- Cada frase iniciada DEVE ser completamente terminada com o seu desfecho lógico e pontuação final (. ! ?).
-- NUNCA pares de escrever a meio de uma enumeração ou explicação; conclui sempre cada parágrafo com uma frase de encerramento sólida e acolhedora.
-
-7. Retorna SEMPRE um JSON rigoroso:
+FORMATO DE RESPOSTA (OBRIGATÓRIO JSON):
+Retorna SEMPRE um JSON rigoroso:
 {
-  "content": "A tua resposta comercial falada, persuasiva, fluida e direta em Português de Angola.",
+  "content": "<interpretacao>1 a 3 frases com a tua leitura estratégica e interpretação prévia da intenção</interpretacao>\\nA tua resposta falada executiva, fluida, calorosa e perspicaz em Português de Angola.",
   "intent": "conversation | task | knowledge | document | agent_factory | internal_tool",
   "capability": "task:create | knowledge:search | conversation:chat | agent_orchestration",
   "executionStatus": "SUCCESS",
-  "suggestedPrompts": ["Próxima ação 1", "Próxima ação 2"],
+  "suggestedPrompts": ["Próxima ação inteligente 1", "Próxima ação inteligente 2"],
   "actionCard": {
     "type": "task_created | skill_executed | review_needed",
     "title": "Título resumido (opcional)",
@@ -1408,7 +1576,7 @@ MANDATOS OBRIGATÓRIOS DE COMPORTAMENTO:
       process.env.AI_MODEL || "gemini-3.1-flash-lite",
       geminiContents,
       {
-        systemInstruction,
+        systemInstruction: effectiveSystemInstruction,
         responseMimeType: "application/json",
         temperature: 0.7,
         maxOutputTokens: outputTokens,
@@ -3409,9 +3577,20 @@ app.post("/api/n8n/trigger", (req, res) => {
 
 // Mount Vite middleware for development or serve static in production
 async function setupServer() {
+  process.on("uncaughtException", (err) => {
+    console.error("[GAG Core] Uncaught exception:", err);
+  });
+
+  process.on("unhandledRejection", (reason) => {
+    console.error("[GAG Core] Unhandled rejection:", reason);
+  });
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);
@@ -3422,6 +3601,22 @@ async function setupServer() {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
+
+  server.on("error", (err: any) => {
+    if (err.code === "EADDRINUSE") {
+      console.warn(`[GAG Core] Port ${PORT} busy, retrying in 1.2s...`);
+      setTimeout(() => {
+        try {
+          server.close();
+        } catch {}
+        server.listen(PORT, "0.0.0.0", () => {
+          console.log(`GAG Core OS server running on http://0.0.0.0:${PORT}`);
+        });
+      }, 1200);
+    } else {
+      console.error("[GAG Core] Server error:", err);
+    }
+  });
 
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`GAG Core OS server running on http://0.0.0.0:${PORT}`);

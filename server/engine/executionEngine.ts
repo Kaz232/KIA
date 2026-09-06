@@ -85,9 +85,6 @@ Objetivo: ${prompt}
 Responda de forma rigorosa, executiva, em língua portuguesa, com tópicos acionáveis e sem placeholders.`,
               config: {
                 temperature: 0.3,
-                thinkingConfig: {
-                  thinkingBudget: 0,
-                },
               },
             });
 
