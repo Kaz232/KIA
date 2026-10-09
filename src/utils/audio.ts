@@ -36,6 +36,57 @@ if (typeof window !== "undefined") {
   window.addEventListener("keydown", unlockAudio, { passive: true });
 }
 
+// Emissor de eventos simples para métricas
+type MetricListener = (metrics: { rms: number; isSpeaking: boolean; wsStatus: string }) => void;
+const listeners: MetricListener[] = [];
+export const audioMetrics = { rms: 0, isSpeaking: false, wsStatus: 'DISCONNECTED' };
+
+export function subscribeToMetrics(listener: MetricListener) {
+  listeners.push(listener);
+  return () => { listeners.splice(listeners.indexOf(listener), 1); };
+}
+
+export async function startVoiceStream(ws: WebSocket): Promise<() => void> {
+  audioMetrics.wsStatus = 'CONNECTING';
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+    
+    await audioContext.audioWorklet.addModule('/src/audio/KiaWorkletProcessor.js');
+    
+    const source = audioContext.createMediaStreamSource(stream);
+    const workletNode = new AudioWorkletNode(audioContext, 'kia-worklet-processor');
+
+    source.connect(workletNode);
+    workletNode.connect(audioContext.destination);
+
+    audioMetrics.wsStatus = 'CONNECTED';
+
+    workletNode.port.onmessage = (event) => {
+      if (event.data.type === 'metrics') {
+        audioMetrics.rms = event.data.rms;
+        audioMetrics.isSpeaking = event.data.isSpeaking;
+        listeners.forEach(l => l(audioMetrics));
+      } else if (event.data.type === 'audio' && ws.readyState === WebSocket.OPEN) {
+        ws.send(event.data.data);
+      }
+    };
+
+    return () => {
+      workletNode.disconnect();
+      source.disconnect();
+      stream.getTracks().forEach(track => track.stop());
+      audioContext.close();
+      audioMetrics.wsStatus = 'DISCONNECTED';
+      listeners.forEach(l => l(audioMetrics));
+    };
+  } catch (err) {
+    audioMetrics.wsStatus = 'ERROR';
+    console.error("Erro ao aceder ao microfone com AudioWorklet:", err);
+    throw err;
+  }
+}
+
 export function playSfx(
   type:
     | "success"
@@ -200,7 +251,21 @@ export function playSfx(
   }
 }
 
+function notifySpeakingStateChanged(speaking: boolean) {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(
+      new CustomEvent("kia-speaking-state", { detail: { isSpeaking: speaking } })
+    );
+    if (!speaking) {
+      window.dispatchEvent(new CustomEvent("kia-speech-ended"));
+    } else {
+      window.dispatchEvent(new CustomEvent("kia-speech-started"));
+    }
+  }
+}
+
 export function stopTtsAudio() {
+  const wasSpeaking = isCurrentlySpeaking;
   isCurrentlySpeaking = false;
   if (chromeKeepAliveInterval) {
     clearInterval(chromeKeepAliveInterval);
@@ -221,10 +286,21 @@ export function stopTtsAudio() {
       window.speechSynthesis.cancel();
     } catch {}
   }
+  if (wasSpeaking) {
+    notifySpeakingStateChanged(false);
+  }
 }
 
 export function getIsSpeaking(): boolean {
   return isCurrentlySpeaking;
+}
+
+export function isAnyAudioSpeaking(): boolean {
+  if (isCurrentlySpeaking) return true;
+  if (typeof window !== "undefined" && "speechSynthesis" in window) {
+    return window.speechSynthesis.speaking;
+  }
+  return false;
 }
 
 // Convert base64 PCM 24kHz audio from Gemini TTS into playable AudioBuffer
@@ -266,6 +342,7 @@ export async function playPcmAudio(base64Data: string, sampleRate = 24000): Prom
   source.connect(ctx.destination);
   currentTtsSource = source;
   isCurrentlySpeaking = true;
+  notifySpeakingStateChanged(true);
 
   return new Promise((resolve) => {
     wakeWordDetector.setMutedForPlayback(true);
@@ -273,6 +350,7 @@ export async function playPcmAudio(base64Data: string, sampleRate = 24000): Prom
       if (currentTtsSource === source) {
         currentTtsSource = null;
         isCurrentlySpeaking = false;
+        notifySpeakingStateChanged(false);
         try {
           wakeWordDetector.setMutedForPlayback(false);
         } catch {}
@@ -283,26 +361,52 @@ export async function playPcmAudio(base64Data: string, sampleRate = 24000): Prom
   });
 }
 
-// Clean markdown text for fluid spoken audio output
+// Clean markdown and text for fluid, natural spoken audio output with Angolan business phonetics
 export function sanitizeForVoice(text: string): string {
   if (!text) return "";
   return text
-    // Remove code blocks
-    .replace(/```[\s\S]*?```/g, "bloco de código omitido.")
+    // Remove code blocks and inline code
+    .replace(/```[\s\S]*?```/g, "bloco técnico omitido.")
     .replace(/`([^`]+)`/g, "$1")
     // Replace markdown links with their text
     .replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1")
-    // Natural spoken numbers with thousands ("180.000" -> "180 mil")
+    // Strip emojis so browser synthesizer does not speak emoji descriptions
+    .replace(/[\u{1F300}-\u{1F9FF}]|[\u{1F600}-\u{1F64F}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{1F1E0}-\u{1F1FF}]/gu, "")
+    // Natural spoken numbers with millions and thousands
     .replace(/(\d+)\.000\.000/g, "$1 milhões")
     .replace(/(\d+)\.(\d{3})\.000/g, "$1 milhões e $2 mil")
     .replace(/(\d+)\.000/g, "$1 mil")
-    // Numbered lists into spoken pauses ("1. " -> "1, ")
-    .replace(/(\d+)\.\s+/g, "$1, ")
+    .replace(/(\d+)\s*k\b/gi, "$1 mil")
+    // Percentages
+    .replace(/50\s*%/g, "cinquenta por cento")
+    .replace(/100\s*%/g, "cem por cento")
+    .replace(/(\d+)\s*%/g, "$1 por cento")
     // Normalize currencies
     .replace(/\bAOA\b/gi, "Kwanzas")
     .replace(/\bKz\b/gi, "Kwanzas")
+    // Angolan and tech business acronyms expanded phonetically for natural speech
+    .replace(/\bMCX\b/gi, "Multicaixa Express")
+    .replace(/\bMulticaixa\b/gi, "Multicaixa")
+    .replace(/\bAGT\b/g, "A G T")
+    .replace(/\bBNA\b/g, "Banco Nacional de Angola")
+    .replace(/\bBFA\b/g, "Banco B F A")
+    .replace(/\bBAI\b/g, "Banco B A I")
+    .replace(/\bBIC\b/g, "Banco B I C")
+    .replace(/\bIBAN\b/gi, "Iban")
+    .replace(/\bNIF\b/g, "N I F")
+    .replace(/\b4K\b/gi, "quatro K")
+    .replace(/\bUI\/UX\b/gi, "design e interfaces")
+    .replace(/\bn8n\b/gi, "n oito n")
+    .replace(/\bMVP\b/g, "M V P")
+    .replace(/\bMPLP\b/g, "M P L P")
+    .replace(/\bCEO\b/g, "C E O")
+    .replace(/\bCRM\b/g, "C R M")
+    .replace(/\bIA\b/g, "inteligência artificial")
+    .replace(/\bPDF\b/gi, "P D F")
+    // Numbered lists into spoken pauses ("1. " -> "1, ")
+    .replace(/(\d+)\.\s+/g, "$1, ")
     // Strip markdown symbols
-    .replace(/[*#_~>]/g, "")
+    .replace(/[*#_~>|]/g, "")
     // Turn bullet markers into natural pauses
     .replace(/^[\s•\-–—]+\s*/gm, "")
     // Turn semicolons into commas for natural rhythm
@@ -518,6 +622,7 @@ export async function speakNaturalText(
 
   stopTtsAudio();
   isCurrentlySpeaking = true;
+  notifySpeakingStateChanged(true);
   onStart?.();
 
   // Speak the FULL clean text without ANY truncation!
@@ -546,9 +651,12 @@ export async function speakNaturalText(
         if (data.audioBase64) {
           await playPcmAudio(data.audioBase64, data.sampleRate || 24000);
           isCurrentlySpeaking = false;
+          notifySpeakingStateChanged(false);
           onEnd?.();
           return;
         }
+      } else if (res.status === 404) {
+        console.warn("TTS API endpoint not found, falling back to browser synthesis.");
       } else {
         // Cooldown for 3 minutes if quota or server error
         serverTtsCooldownUntil = Date.now() + 180000;
@@ -560,10 +668,16 @@ export async function speakNaturalText(
   }
 
   // 2. High-performance Browser SpeechSynthesis speaks all chunks sequentially
-  const synthesisSuccess = await speakViaBrowserSynthesis(chunks, onEnd);
+  const synthesisSuccess = await speakViaBrowserSynthesis(chunks, () => {
+    isCurrentlySpeaking = false;
+    notifySpeakingStateChanged(false);
+    onEnd?.();
+  });
   if (synthesisSuccess) return;
 
   // 3. Final safety resolve
   stopTtsAudio();
+  isCurrentlySpeaking = false;
+  notifySpeakingStateChanged(false);
   onEnd?.();
 }

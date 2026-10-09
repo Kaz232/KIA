@@ -18,10 +18,12 @@ import {
   Database,
   User,
   Download,
+  FileDown,
   Smartphone,
   Zap,
   TrendingUp,
   Radio,
+  UploadCloud,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { UserRole } from "../types";
@@ -45,6 +47,7 @@ export const Header: React.FC = () => {
     setIsSynergyModalOpen,
     setIsScenarioModalOpen,
     setIsKazaModalOpen,
+    openDocumentExportModal,
   } = useApp();
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -79,18 +82,22 @@ export const Header: React.FC = () => {
           onClick={() => setActiveTab("dashboard")}
           className="flex items-center space-x-2.5 group text-left focus:outline-none"
         >
-          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-amber-400 via-amber-500 to-yellow-600 flex items-center justify-center shadow-md shadow-amber-500/20 group-hover:scale-105 transition-transform duration-200">
-            <span className="font-black text-black text-lg tracking-tighter">G</span>
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-700 via-blue-600 to-indigo-900 border border-blue-400/40 flex items-center justify-center shadow-md shadow-blue-500/20 group-hover:scale-105 transition-transform duration-200 relative overflow-hidden">
+            {/* Miniature stylized camera shutter lens */}
+            <div className="absolute inset-0 bg-radial from-blue-400/20 to-transparent"></div>
+            <div className="w-5 h-5 rounded-full border-2 border-slate-200 flex items-center justify-center relative shadow-inner">
+              <div className="w-2.5 h-2.5 rounded-full bg-blue-400 border border-white/60"></div>
+            </div>
           </div>
           <div>
             <div className="flex items-center space-x-1.5">
-              <span className="font-bold text-white tracking-wider text-base">GAG CORE</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-semibold border border-amber-500/30">
-                v2.4 OS
+              <span className="font-extrabold text-white tracking-wider text-base">GAG VISUAL</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/20 text-blue-300 font-semibold border border-blue-500/30">
+                CORE OS
               </span>
             </div>
-            <p className="text-[11px] text-slate-400 font-medium hidden sm:block">
-              Sistema Operacional Inteligente da GAG Visual
+            <p className="text-[10px] text-slate-400 font-medium hidden sm:block truncate max-w-xs">
+              Soluções com propósito, inovações com raízes. Gerar, acolher e gerir.
             </p>
           </div>
         </button>
@@ -172,6 +179,27 @@ export const Header: React.FC = () => {
           <Zap className="w-3.5 h-3.5 fill-black text-black group-hover:animate-bounce" />
           <span className="font-black tracking-wide hidden sm:inline">⚡ Disparar Sinergia</span>
           <span className="font-black tracking-wide sm:hidden">⚡ Sinergia</span>
+        </button>
+
+        {/* GAG Official Document & File Export Button */}
+        <button
+          onClick={() => openDocumentExportModal()}
+          className="flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg bg-slate-900/90 hover:bg-slate-800 border border-amber-500/40 text-amber-300 hover:text-amber-200 font-bold text-xs transition-all shadow-sm hover:scale-105 active:scale-95 group"
+          title="Exportar Documentos e Ficheiros Oficiais GAG Visual (PDF, Word, MD, HTML, WhatsApp, JSON, CSV)"
+        >
+          <FileDown className="w-3.5 h-3.5 text-amber-400 group-hover:animate-bounce" />
+          <span className="hidden sm:inline">Exportar Ficheiro</span>
+          <span className="sm:hidden">Exportar</span>
+        </button>
+
+        {/* Quick Multi-File Knowledge Attachment Button */}
+        <button
+          onClick={() => setActiveTab("knowledge")}
+          className="hidden md:flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg bg-blue-500/15 hover:bg-blue-500/25 border border-blue-500/35 text-blue-300 hover:text-blue-200 font-bold text-xs transition-all shadow-sm hover:scale-105 active:scale-95 group"
+          title="Anexar múltiplos ficheiros na Base de Conhecimento e delegar na equipa autónoma"
+        >
+          <UploadCloud className="w-3.5 h-3.5 text-blue-400 group-hover:scale-110 transition-transform" />
+          <span>Anexar Conhecimento</span>
         </button>
 
         {/* Quick Enterprise Tools: Autocura, Simulator & Kaza Webhooks */}

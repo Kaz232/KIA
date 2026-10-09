@@ -1,12 +1,13 @@
 import { createClient, SupabaseClient, User as SupabaseUser, Session } from "@supabase/supabase-js";
 import { User, UserRole, AuthSession } from "../types";
 import { dbClient } from "../persistence/supabaseClient";
+import { safeStorage } from "../utils/safeStorage";
 
 let supabaseInstance: SupabaseClient | null = null;
 const metaEnv = (import.meta as any).env || {};
 let currentConfig = {
-  url: (metaEnv.VITE_SUPABASE_URL as string) || (typeof localStorage !== "undefined" ? localStorage.getItem("gag_supabase_url") || "" : ""),
-  anonKey: (metaEnv.VITE_SUPABASE_ANON_KEY as string) || (typeof localStorage !== "undefined" ? localStorage.getItem("gag_supabase_anon_key") || "" : ""),
+  url: (metaEnv.VITE_SUPABASE_URL as string) || safeStorage.getItem("gag_supabase_url") || "",
+  anonKey: (metaEnv.VITE_SUPABASE_ANON_KEY as string) || safeStorage.getItem("gag_supabase_anon_key") || "",
 };
 
 export function isSupabaseConfigured(): boolean {
@@ -31,8 +32,8 @@ export function saveSupabaseConfig(url: string, anonKey: string): { success: boo
   const cleanKey = anonKey.trim();
 
   if (!cleanUrl && !cleanKey) {
-    localStorage.removeItem("gag_supabase_url");
-    localStorage.removeItem("gag_supabase_anon_key");
+    safeStorage.removeItem("gag_supabase_url");
+    safeStorage.removeItem("gag_supabase_anon_key");
     currentConfig = { url: "", anonKey: "" };
     supabaseInstance = null;
     return { success: true };
@@ -47,8 +48,8 @@ export function saveSupabaseConfig(url: string, anonKey: string): { success: boo
   }
 
   currentConfig = { url: cleanUrl, anonKey: cleanKey };
-  localStorage.setItem("gag_supabase_url", cleanUrl);
-  localStorage.setItem("gag_supabase_anon_key", cleanKey);
+  safeStorage.setItem("gag_supabase_url", cleanUrl);
+  safeStorage.setItem("gag_supabase_anon_key", cleanKey);
   
   // Reset singleton so next call re-instantiates with new creds
   supabaseInstance = null;

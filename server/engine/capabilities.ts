@@ -18,6 +18,11 @@ export const AGENT_CAPABILITIES = [
   "WRITE_CODE",
   "EDIT_CODE",
   "DEPLOY",
+  "GENERATE_CONTENT",
+  "CREATE_TASK",
+  "GENERATE_VISUAL_ASSET",
+  "FINANCIAL_CALCULUS",
+  "DISPATCH_AGENT",
 ] as const;
 
 export type AgentCapability = (typeof AGENT_CAPABILITIES)[number];

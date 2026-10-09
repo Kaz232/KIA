@@ -27,6 +27,7 @@ export const AuditLogView: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedStatus, setSelectedStatus] = useState<string>("ALL");
   const [selectedCapability, setSelectedCapability] = useState<string>("ALL");
+  const [activeView, setActiveView] = useState<"ALL" | "AUTONOMY">("ALL");
   const [inspectingLog, setInspectingLog] = useState<AuditLog | null>(null);
   const [copiedHashId, setCopiedHashId] = useState<string | null>(null);
   const [customTestNotice, setCustomTestNotice] = useState<string | null>(null);
@@ -44,8 +45,9 @@ export const AuditLogView: React.FC = () => {
     const matchesStatus = selectedStatus === "ALL" || log.status === selectedStatus;
     const matchesCapability =
       selectedCapability === "ALL" || (log.capability || "").toLowerCase() === selectedCapability.toLowerCase();
+    const matchesView = activeView === "ALL" || (activeView === "AUTONOMY" && !!log.agentId);
 
-    return matchesSearch && matchesStatus && matchesCapability;
+    return matchesSearch && matchesStatus && matchesCapability && matchesView;
   });
 
   const handleCopyHash = (hash: string, id: string) => {
@@ -139,29 +141,54 @@ export const AuditLogView: React.FC = () => {
       )}
 
       {/* Filters Bar */}
-      <div className="flex flex-col sm:flex-row items-center gap-3">
-        <div className="relative flex-1 w-full">
-          <input
-            type="text"
-            placeholder="Pesquisar por ação, autor, hash SHA-256, detalhes ou capacidade..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-slate-900/90 border border-slate-800 rounded-xl pl-9 pr-4 py-2.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500/50"
-          />
-          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+      <div className="flex flex-col space-y-3">
+        <div className="flex items-center space-x-2 border-b border-slate-800">
+          <button
+            onClick={() => setActiveView("ALL")}
+            className={`py-2 px-4 text-xs font-bold border-b-2 transition-colors ${
+              activeView === "ALL"
+                ? "border-amber-500 text-amber-400"
+                : "border-transparent text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            Trilha Completa
+          </button>
+          <button
+            onClick={() => setActiveView("AUTONOMY")}
+            className={`py-2 px-4 text-xs font-bold border-b-2 flex items-center space-x-1.5 transition-colors ${
+              activeView === "AUTONOMY"
+                ? "border-amber-500 text-amber-400"
+                : "border-transparent text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <Bot className="w-3.5 h-3.5" />
+            <span>Auditoria de Autonomia</span>
+          </button>
         </div>
+        <div className="flex flex-col sm:flex-row items-center gap-3">
+          <div className="relative flex-1 w-full">
+            <input
+              type="text"
+              placeholder="Pesquisar por ação, autor, hash SHA-256, detalhes ou capacidade..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-slate-900/90 border border-slate-800 rounded-xl pl-9 pr-4 py-2.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-amber-500/50"
+            />
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+          </div>
 
-        <select
-          value={selectedStatus}
-          onChange={(e) => setSelectedStatus(e.target.value)}
-          className="w-full sm:w-auto bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-slate-300 focus:outline-none focus:border-amber-500/50"
-        >
-          <option value="ALL">Todos os Estados</option>
-          <option value="SUCCESS">Sucesso (SUCCESS)</option>
-          <option value="DENIED">Negado / RBAC (DENIED)</option>
-          <option value="REVIEW_REQUIRED">Revisão Necessária</option>
-          <option value="FAILED">Falha (FAILED)</option>
-        </select>
+          <select
+            value={selectedStatus}
+            onChange={(e) => setSelectedStatus(e.target.value)}
+            className="w-full sm:w-auto bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-slate-300 focus:outline-none focus:border-amber-500/50"
+          >
+            <option value="ALL">Todos os Estados</option>
+            <option value="SUCCESS">Sucesso (SUCCESS)</option>
+            <option value="DENIED">Negado / RBAC (DENIED)</option>
+            <option value="REVIEW_REQUIRED">Revisão Necessária</option>
+            <option value="FAILED">Falha (FAILED)</option>
+          </select>
+        </div>
       </div>
 
       {/* Logs Table / Card Deck */}
@@ -217,6 +244,11 @@ export const AuditLogView: React.FC = () => {
                           </div>
                           <div className="text-[10px] font-mono text-slate-500">
                             {log.agentName ? `Agente: ${log.agentName}` : "Utilizador"}
+                            {log.confidenceScore !== undefined && (
+                              <span className="ml-2 font-bold text-amber-400">
+                                Score: {(log.confidenceScore * 100).toFixed(0)}%
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>

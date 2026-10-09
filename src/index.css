@@ -1,1 +1,211 @@
 @import "tailwindcss";
+
+@keyframes floatUp {
+  0% {
+    opacity: 1;
+    transform: translateY(0px) scale(0.85);
+  }
+  50% {
+    opacity: 0.95;
+    transform: translateY(-20px) scale(1.15);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-40px) scale(1.2);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeInUp {
+  0% {
+    opacity: 0;
+    transform: translateY(12px) scale(0.985);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-floatUp {
+  animation: floatUp 1.2s ease-out forwards;
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.32s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Keyframe animations for KiaFace interactive Tamagotchi */
+@keyframes kiaBlink {
+  0%, 88%, 100% {
+    transform: scaleY(1);
+  }
+  94% {
+    transform: scaleY(0.1);
+  }
+}
+
+@keyframes kiaFloat {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes kiaScanThinking {
+  0%, 100% {
+    transform: translateX(-4px);
+  }
+  50% {
+    transform: translateX(4px);
+  }
+}
+
+@keyframes kiaPulsingRing {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 0.35;
+  }
+}
+
+@keyframes kiaGlitch {
+  0%, 100% {
+    transform: translate(0, 0);
+  }
+  20% {
+    transform: translate(-3px, 2px);
+  }
+  40% {
+    transform: translate(3px, -2px);
+  }
+  60% {
+    transform: translate(-2px, -1px);
+  }
+  80% {
+    transform: translate(2px, 1px);
+  }
+}
+
+@keyframes kiaEqualizerBar {
+  0%, 100% {
+    height: 4px;
+  }
+  50% {
+    height: 14px;
+  }
+}
+
+.animate-kiaBlink {
+  animation: kiaBlink 4s infinite ease-in-out;
+}
+
+.animate-kiaFloat {
+  animation: kiaFloat 3.5s infinite ease-in-out;
+}
+
+.animate-kiaScanThinking {
+  animation: kiaScanThinking 1.4s infinite ease-in-out;
+}
+
+.animate-kiaPulsingRing {
+  animation: kiaPulsingRing 1.8s infinite ease-in-out;
+}
+
+.animate-kiaGlitch {
+  animation: kiaGlitch 0.4s infinite linear;
+}
+
+.animate-kiaEqualizer {
+  animation: kiaEqualizerBar 0.8s infinite ease-in-out;
+}
+
+/* Animated lip movement when KIA is speaking (isSpeaking) */
+@keyframes kiaLipMovement {
+  0%, 100% {
+    height: 3px;
+    width: 65%;
+    border-radius: 9999px;
+    transform: scaleY(0.6);
+  }
+  25% {
+    height: 9px;
+    width: 85%;
+    border-radius: 50%;
+    transform: scaleY(1.3) scaleX(1.05);
+  }
+  50% {
+    height: 4px;
+    width: 95%;
+    border-radius: 9999px;
+    transform: scaleY(0.7);
+  }
+  75% {
+    height: 11px;
+    width: 78%;
+    border-radius: 40%;
+    transform: scaleY(1.4) scaleX(0.95);
+  }
+}
+
+@keyframes kiaUpperLip {
+  0%, 100% {
+    transform: translateY(0);
+    opacity: 0.85;
+  }
+  30% {
+    transform: translateY(-2px) scaleX(1.08);
+    opacity: 1;
+  }
+  70% {
+    transform: translateY(-0.8px) scaleX(0.96);
+    opacity: 0.9;
+  }
+}
+
+@keyframes kiaLowerLip {
+  0%, 100% {
+    transform: translateY(0);
+    opacity: 0.85;
+  }
+  30% {
+    transform: translateY(2px) scaleX(1.08);
+    opacity: 1;
+  }
+  70% {
+    transform: translateY(1.2px) scaleX(0.96);
+    opacity: 0.9;
+  }
+}
+
+.animate-kiaLipMovement {
+  animation: kiaLipMovement 0.32s infinite ease-in-out;
+}
+
+.animate-kiaUpperLip {
+  animation: kiaUpperLip 0.32s infinite ease-in-out;
+}
+
+.animate-kiaLowerLip {
+  animation: kiaLowerLip 0.32s infinite ease-in-out;
+}
+

@@ -19,9 +19,17 @@ import {
   CheckSquare,
   Wand2,
   FileText,
+  UploadCloud,
+  ShieldCheck,
+  Cpu,
+  Users,
+  Brain,
+  Bot,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
-import { KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from "../types";
+import { KnowledgeCategory, KnowledgeItem, KnowledgeStatus, GenerativeTool } from "../types";
+import { KnowledgeBatchIngestionModal } from "./KnowledgeBatchIngestionModal";
+import { AgentAutonomyControlModal } from "./AgentAutonomyControlModal";
 
 export const KnowledgeBaseView: React.FC = () => {
   const {
@@ -33,14 +41,23 @@ export const KnowledgeBaseView: React.FC = () => {
     setActiveTab,
     currentUser,
     activeRole,
+    tasks,
+    taughtKnowledgeIds,
+    teachKnowledgeToKia,
+    teachAllKnowledgeToKia,
+    transformToGenerativeTool,
+    isTeachingToKia,
   } = useApp();
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("ALL");
   const [selectedItem, setSelectedItem] = useState<KnowledgeItem | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isBatchIngestionOpen, setIsBatchIngestionOpen] = useState(false);
+  const [isAutonomyModalOpen, setIsAutonomyModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<KnowledgeItem | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [createdToolModal, setCreatedToolModal] = useState<GenerativeTool | null>(null);
 
   // Form State
   const [formTitle, setFormTitle] = useState("");
@@ -48,6 +65,8 @@ export const KnowledgeBaseView: React.FC = () => {
   const [formContent, setFormContent] = useState("");
   const [formTags, setFormTags] = useState("");
   const [formStatus, setFormStatus] = useState<KnowledgeStatus>("APPROVED");
+
+  const pendingTasksCount = tasks.filter((t) => t.status === "TODO" || t.status === "IN_PROGRESS").length;
 
   const categories: { key: string; label: string }[] = [
     { key: "ALL", label: "Todas as Categorias" },
@@ -88,6 +107,33 @@ export const KnowledgeBaseView: React.FC = () => {
   const handleSendToStudio = (item: KnowledgeItem) => {
     sessionStorage.setItem("gag_studio_prompt", `Criar arte conceitual com base na regra: ${item.title}. Detalhes: ${item.content.slice(0, 150)}`);
     setActiveTab("studio");
+  };
+
+  const handleTeachItemToKia = async (item: KnowledgeItem) => {
+    const res = await teachKnowledgeToKia(item);
+    setActionNotice(res.message);
+    setTimeout(() => setActionNotice(null), 4000);
+  };
+
+  const handleTeachAllToKia = async () => {
+    const res = await teachAllKnowledgeToKia();
+    setActionNotice(res.message);
+    setTimeout(() => setActionNotice(null), 4500);
+  };
+
+  const handleTransformToGenerativeTool = async (item: KnowledgeItem) => {
+    const res = await transformToGenerativeTool({
+      id: item.id,
+      title: item.title,
+      type: "knowledge",
+      content: item.content,
+      category: item.category,
+    });
+    if (res.success && res.tool) {
+      setCreatedToolModal(res.tool);
+      setActionNotice(`Nova Ferramenta Generativa criada: "${res.tool.name}"!`);
+      setTimeout(() => setActionNotice(null), 4000);
+    }
   };
 
   const openNewModal = () => {
@@ -172,7 +218,7 @@ export const KnowledgeBaseView: React.FC = () => {
       )}
 
       {/* Header Bar */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-5 rounded-2xl bg-[#090c14] border border-slate-800 shadow-lg">
+      <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 p-5 rounded-2xl bg-[#090c14] border border-slate-800 shadow-lg">
         <div>
           <div className="flex items-center space-x-2">
             <BookOpen className="w-5 h-5 text-amber-400" />
@@ -180,18 +226,81 @@ export const KnowledgeBaseView: React.FC = () => {
             <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
               {knowledge.length} Artigos
             </span>
+            <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold border border-emerald-500/30 flex items-center space-x-1">
+              <Brain className="w-3.5 h-3.5 text-emerald-400" />
+              <span>{taughtKnowledgeIds.length} Ativos na KIA</span>
+            </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Repositório central de diretrizes, metodologias, manuais e conhecimento operacional da GAG Visual.
+            Repositório central de diretrizes, metodologias, manuais e conhecimento operacional da GAG Visual integrados na KIA.
           </p>
         </div>
 
+        {/* Action Buttons: Batch Upload & Team Autonomy */}
+        <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
+          <button
+            onClick={handleTeachAllToKia}
+            disabled={isTeachingToKia}
+            className="flex-1 sm:flex-none px-4 py-2.5 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 disabled:opacity-50 text-black font-extrabold text-xs rounded-xl flex items-center justify-center space-x-2 shadow-lg shadow-amber-500/20 active:scale-95 transition-all"
+            title="Injetar todos os artigos da base de conhecimento diretamente no cérebro executivo e memória de trabalho da KIA"
+          >
+            <Brain className="w-4 h-4 fill-black/20" />
+            <span>{isTeachingToKia ? "A Ensinar à KIA..." : `🧠 Ensinar Toda a Base à KIA (${knowledge.length})`}</span>
+          </button>
+
+          <button
+            onClick={() => setIsBatchIngestionOpen(true)}
+            className="flex-1 sm:flex-none px-4 py-2.5 bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-black text-xs rounded-xl flex items-center justify-center space-x-2 shadow-lg shadow-blue-500/20 active:scale-95 transition-all"
+            title="Anexar múltiplos documentos (PDF, Word, TXT, Imagens) de uma só vez para os agentes lerem e transformarem em ferramentas"
+          >
+            <UploadCloud className="w-4 h-4 text-blue-200" />
+            <span>⚡ Anexar Documentos</span>
+          </button>
+
+          <button
+            onClick={() => setIsAutonomyModalOpen(true)}
+            className="flex-1 sm:flex-none px-3.5 py-2.5 bg-slate-900 border border-slate-700 hover:border-amber-500/40 text-amber-300 font-bold text-xs rounded-xl flex items-center justify-center space-x-1.5 transition-all"
+            title="Abrir o painel de autoridade e autonomia da equipa de agentes"
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+            <span>Autonomia</span>
+          </button>
+
+          <button
+            onClick={openNewModal}
+            className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl flex items-center justify-center space-x-1.5 transition-all"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Criar Manual</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Autonomous Team Working Banner */}
+      <div className="p-4 rounded-2xl bg-gradient-to-r from-blue-950/30 via-[#0a0f1d] to-amber-950/20 border border-blue-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-md">
+        <div className="flex items-start space-x-3">
+          <div className="w-8 h-8 rounded-xl bg-blue-500/20 border border-blue-500/40 flex items-center justify-center text-blue-400 shrink-0 mt-0.5">
+            <Cpu className="w-4 h-4" />
+          </div>
+          <div>
+            <div className="flex items-center space-x-2">
+              <h3 className="text-xs font-bold text-white">Equipa de Agentes com Autonomia Total Ativa</h3>
+              <span className="text-[10px] px-2 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 font-mono font-bold">
+                Operação sem Fricção
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-300 mt-0.5 leading-relaxed">
+              Pode anexar mais de um ficheiro ao mesmo tempo. Os agentes leem, direcionam para a sua especialidade, criam ferramentas operacionais e executam as tarefas sem necessitarem de supervisão para decisões rotineiras.
+            </p>
+          </div>
+        </div>
+
         <button
-          onClick={openNewModal}
-          className="px-4 py-2.5 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-black font-extrabold text-xs rounded-xl flex items-center space-x-2 shadow-lg shadow-amber-500/20 active:scale-95 transition-all"
+          onClick={() => setIsAutonomyModalOpen(true)}
+          className="px-3.5 py-2 rounded-xl bg-blue-600/30 hover:bg-blue-600/50 border border-blue-400/40 text-blue-200 text-xs font-bold flex items-center space-x-1.5 shrink-0 transition-all self-end sm:self-center"
         >
-          <Plus className="w-4 h-4" />
-          <span>Criar Artigo</span>
+          <span>Gerir Autonomia</span>
+          <ArrowRight className="w-3.5 h-3.5" />
         </button>
       </div>
 
@@ -223,43 +332,90 @@ export const KnowledgeBaseView: React.FC = () => {
 
       {/* Knowledge Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filteredKnowledge.map((item, idx) => (
-          <div
-            key={`kb-${item.id}-${idx}`}
-            onClick={() => setSelectedItem(item)}
-            className="bg-[#090c14] border border-slate-800 hover:border-amber-500/40 rounded-2xl p-5 flex flex-col justify-between cursor-pointer group transition-all shadow-lg hover:shadow-amber-500/5"
-          >
-            <div>
-              <div className="flex items-center justify-between gap-2 mb-2.5">
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-amber-400 font-bold uppercase">
-                  {item.category.replace(/_/g, " ")}
-                </span>
-                <span className="text-[10px] text-slate-500">v{item.version}</span>
+        {filteredKnowledge.map((item, idx) => {
+          const isTaught = taughtKnowledgeIds.includes(item.id);
+          return (
+            <div
+              key={`kb-${item.id}-${idx}`}
+              onClick={() => setSelectedItem(item)}
+              className="bg-[#090c14] border border-slate-800 hover:border-amber-500/40 rounded-2xl p-5 flex flex-col justify-between cursor-pointer group transition-all shadow-lg hover:shadow-amber-500/5"
+            >
+              <div>
+                <div className="flex items-center justify-between gap-2 mb-2.5">
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-amber-400 font-bold uppercase">
+                    {item.category.replace(/_/g, " ")}
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    {isTaught && (
+                      <span
+                        className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center space-x-1"
+                        title="Diretriz absorvida e ativa no cérebro da KIA"
+                      >
+                        <Brain className="w-3 h-3 text-emerald-400" />
+                        <span>KIA Ativa</span>
+                      </span>
+                    )}
+                    <span className="text-[10px] text-slate-500">v{item.version}</span>
+                  </div>
+                </div>
+
+                <h3 className="text-sm font-bold text-white group-hover:text-amber-300 transition-colors line-clamp-2">
+                  {item.title}
+                </h3>
+
+                <p className="text-xs text-slate-400 mt-2 line-clamp-3 leading-relaxed">
+                  {item.content}
+                </p>
               </div>
 
-              <h3 className="text-sm font-bold text-white group-hover:text-amber-300 transition-colors line-clamp-2">
-                {item.title}
-              </h3>
+              {/* Card Actions & Footer */}
+              <div className="mt-4 pt-3 border-t border-slate-800/80 space-y-2.5">
+                <div className="flex items-center justify-between gap-1.5">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleTeachItemToKia(item);
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold flex items-center space-x-1 border transition-all ${
+                      isTaught
+                        ? "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/30"
+                        : "bg-amber-500/15 hover:bg-amber-500/30 text-amber-300 border-amber-500/40"
+                    }`}
+                    title="Ensinar esta regra para a KIA aplicar nas conversas e entregáveis"
+                  >
+                    <Brain className="w-3 h-3" />
+                    <span>{isTaught ? "Atualizar na KIA" : "🧠 Ensinar à KIA"}</span>
+                  </button>
 
-              <p className="text-xs text-slate-400 mt-2 line-clamp-3 leading-relaxed">
-                {item.content}
-              </p>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleTransformToGenerativeTool(item);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-purple-500/15 hover:bg-purple-500/30 border border-purple-500/30 text-purple-300 text-[10px] font-bold flex items-center space-x-1 transition-all"
+                    title="Transformar este manual numa ferramenta generativa acionável no Estúdio Multimodal"
+                  >
+                    <Sparkles className="w-3 h-3 text-purple-400" />
+                    <span>⚡ Gerador IA</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] text-slate-500">
+                  <div className="flex items-center space-x-1.5 truncate">
+                    <User className="w-3 h-3 text-slate-400 shrink-0" />
+                    <span className="truncate">{item.owner}</span>
+                  </div>
+
+                  <div className="flex items-center space-x-2 shrink-0">
+                    <span className="text-[10px] text-slate-500">
+                      {new Date(item.updatedAt).toLocaleDateString("pt-PT")}
+                    </span>
+                  </div>
+                </div>
+              </div>
             </div>
-
-            <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between text-[11px] text-slate-500">
-              <div className="flex items-center space-x-1.5 truncate">
-                <User className="w-3 h-3 text-slate-400 shrink-0" />
-                <span className="truncate">{item.owner}</span>
-              </div>
-
-              <div className="flex items-center space-x-2 shrink-0">
-                <span className="text-[10px] text-slate-500">
-                  {new Date(item.updatedAt).toLocaleDateString("pt-PT")}
-                </span>
-              </div>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* View Item Drawer / Modal */}
@@ -268,10 +424,18 @@ export const KnowledgeBaseView: React.FC = () => {
           <div className="bg-[#090c14] border border-amber-500/30 rounded-2xl max-w-3xl w-full max-h-[85vh] flex flex-col p-6 shadow-2xl overflow-hidden">
             <div className="flex items-start justify-between pb-4 border-b border-slate-800">
               <div>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold">
-                  {selectedItem.category}
-                </span>
-                <h2 className="text-lg font-bold text-white mt-1">{selectedItem.title}</h2>
+                <div className="flex items-center space-x-2">
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold">
+                    {selectedItem.category}
+                  </span>
+                  {taughtKnowledgeIds.includes(selectedItem.id) && (
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center space-x-1">
+                      <Brain className="w-3 h-3 text-emerald-400" />
+                      <span>Ativo no Cérebro da KIA</span>
+                    </span>
+                  )}
+                </div>
+                <h2 className="text-lg font-bold text-white mt-1.5">{selectedItem.title}</h2>
               </div>
               <button
                 onClick={() => setSelectedItem(null)}
@@ -299,7 +463,31 @@ export const KnowledgeBaseView: React.FC = () => {
             </div>
 
             <div className="pt-4 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center space-x-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => {
+                    handleTeachItemToKia(selectedItem);
+                  }}
+                  className="px-3 py-2 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-black rounded-xl text-xs font-extrabold flex items-center space-x-1.5 transition-all shadow-md"
+                  title="Injetar e calibrar este conhecimento na memória de raciocínio da KIA"
+                >
+                  <Brain className="w-3.5 h-3.5" />
+                  <span>🧠 Ensinar à KIA</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    const item = selectedItem;
+                    setSelectedItem(null);
+                    handleTransformToGenerativeTool(item);
+                  }}
+                  className="px-3 py-2 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/40 text-purple-300 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-colors"
+                  title="Converter este conhecimento numa ferramenta generativa pronta no Estúdio Multimodal"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+                  <span>⚡ Transformar em Gerador IA</span>
+                </button>
+
                 <button
                   onClick={() => {
                     handleTransformToTask(selectedItem);
@@ -317,11 +505,11 @@ export const KnowledgeBaseView: React.FC = () => {
                     handleSendToStudio(selectedItem);
                     setSelectedItem(null);
                   }}
-                  className="px-3 py-2 bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/40 text-purple-300 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-colors"
-                  title="Enviar este briefing ou diretriz para o Estúdio Multimodal / Veo"
+                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition-colors"
+                  title="Enviar este briefing para o Estúdio Multimodal"
                 >
                   <Wand2 className="w-3.5 h-3.5" />
-                  <span>Enviar para Estúdio</span>
+                  <span>Estúdio</span>
                 </button>
               </div>
 
@@ -350,11 +538,67 @@ export const KnowledgeBaseView: React.FC = () => {
                 </button>
                 <button
                   onClick={() => setSelectedItem(null)}
-                  className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-black font-bold rounded-xl text-xs"
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl text-xs"
                 >
                   Fechar
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success Modal: Created Generative Tool */}
+      {createdToolModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#090c14] border border-purple-500/40 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 text-xs">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center space-x-2">
+                <Sparkles className="w-5 h-5 text-purple-400" />
+                <h3 className="text-sm font-bold text-white">Ferramenta Generativa Criada!</h3>
+              </div>
+              <button
+                onClick={() => setCreatedToolModal(null)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-4 rounded-xl bg-purple-950/20 border border-purple-500/30 space-y-2">
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 font-bold uppercase">
+                {createdToolModal.category}
+              </span>
+              <h4 className="text-sm font-bold text-white">{createdToolModal.name}</h4>
+              <p className="text-xs text-slate-300 leading-relaxed">{createdToolModal.description}</p>
+            </div>
+
+            <div className="p-3 bg-slate-900/80 rounded-xl border border-slate-800 text-[11px] text-slate-400 space-y-1">
+              <p className="font-semibold text-slate-300">Campos de Entrada Configurados:</p>
+              <ul className="list-disc list-inside space-y-0.5 text-slate-400">
+                {createdToolModal.inputFields.map((f, i) => (
+                  <li key={i}>{f.label} ({f.type})</li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="pt-3 border-t border-slate-800 flex items-center justify-end space-x-2">
+              <button
+                onClick={() => setCreatedToolModal(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-semibold rounded-xl text-xs"
+              >
+                Concluir
+              </button>
+              <button
+                onClick={() => {
+                  setCreatedToolModal(null);
+                  setActiveTab("studio");
+                }}
+                className="px-4 py-2 bg-gradient-to-r from-purple-500 to-indigo-500 hover:from-purple-400 hover:to-indigo-400 text-white font-bold rounded-xl text-xs flex items-center space-x-1.5 shadow-lg shadow-purple-500/20"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>⚡ Abrir no Estúdio Multimodal</span>
+              </button>
             </div>
           </div>
         </div>
@@ -452,6 +696,20 @@ export const KnowledgeBaseView: React.FC = () => {
           </form>
         </div>
       )}
+
+      {/* Batch Multi-File Ingestion Modal */}
+      <KnowledgeBatchIngestionModal
+        isOpen={isBatchIngestionOpen}
+        onClose={() => setIsBatchIngestionOpen(false)}
+        onSuccessNotice={(msg) => setActionNotice(msg)}
+      />
+
+      {/* Agent Autonomy and Authority Control Modal */}
+      <AgentAutonomyControlModal
+        isOpen={isAutonomyModalOpen}
+        onClose={() => setIsAutonomyModalOpen(false)}
+        onSuccessNotice={(msg) => setActionNotice(msg)}
+      />
     </div>
   );
 };

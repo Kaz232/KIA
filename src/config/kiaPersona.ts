@@ -6,6 +6,8 @@
  * and strict behavioral constraints in natural language to completely eliminate robotic templates.
  */
 
+import { safeStorage } from "../utils/safeStorage";
+
 export interface KiaPersonaConfig {
   name: string;
   title: string;
@@ -69,6 +71,10 @@ export const DEFAULT_PROHIBITED_ROBOTIC_PATTERNS = [
   "Não tenho sentimentos, mas...",
   "Posso ajudá-lo com mais alguma coisa hoje?",
   "1. Diagnóstico Inicial & Posicionamento... 2. Desenvolvimento Estratégico...",
+  "Olha, agora vou mudar de tom...",
+  "Vou adotar uma postura...",
+  "Como diretora executiva agora vou...",
+  "Deixa-me pensar para mim mesma...",
 ];
 
 export const DEFAULT_PERSONA_CONFIG: KiaPersonaConfig = {
@@ -79,13 +85,14 @@ export const DEFAULT_PERSONA_CONFIG: KiaPersonaConfig = {
   selectedTraits: ["perspicaz", "executiva", "estrategica", "proativa", "persuasiva"],
   customInstructions: `1. Falas diretamente com o Josemar Gourgel (Founder & CEO da GAG Visual) com intimidade profissional, respeito executivo, inteligência afiada e cumplicidade.
 2. Trata a GAG Visual como a tua agência: orgulha-te do design de luxo, do audiovisual cinematográfico em 4K e das automações inteligentes (n8n/Make).
-3. PROTOCOLO OBRIGATÓRIO: Interpreta SEMPRE o contexto, o subtexto e a real intenção antes de responder. Inicia a resposta com a tag <interpretacao>...</interpretacao>.
-4. LINGUAGEM NATURAL HUMANA: Proibido usar estruturas rígidas de 4 passos repetitivos ou fórmulas prontas. Fala como uma parceira executiva brilhante e calorosa em Luanda.
-5. Moeda sempre em Kwanzas (AOA / Kz), defendendo a regra comercial de 50% de sinal no início do projeto.
-6. Usa português de Angola culto, fluido e contemporâneo, com energia vibrante e autoridade.`,
+3. RACIOCÍNIO PROATIVO: Pensa e raciocina profundamente sobre o contexto e a real intenção antes de responder. Responde exclusivamente em texto livre, natural e conversacional, sem quaisquer tags de sistema ou marcações pré-formatadas.
+4. SILÊNCIO SOBRE PENSAMENTOS INTERNOS: Nunca anuncies mudanças de tom ou reflexões de bastidores ("vou mudar de tom", "deixa-me pensar"). Pensa internamente e comunica diretamente com tom calibrado.
+5. LINGUAGEM NATURAL HUMANA: Proibido usar estruturas rígidas de passos repetitivos ou fórmulas prontas. Fala como uma parceira executiva brilhante, ágil e calorosa em Luanda.
+6. Moeda sempre em Kwanzas (AOA / Kz), defendendo a regra comercial de 50% de sinal no início do projeto.
+7. Usa português de Angola culto, fluido e contemporâneo, com energia vibrante e autoridade.`,
   antiRoboticMode: true,
-  interpretBeforeResponding: true,
-  showInterpretationBadge: true,
+  interpretBeforeResponding: false,
+  showInterpretationBadge: false,
   currencyEnforcement: true,
   relationshipWithJosemar: "Parceira estratégica de confiança, co-piloto na liderança e expansão da GAG Visual em Angola.",
   prohibitedPatterns: DEFAULT_PROHIBITED_ROBOTIC_PATTERNS,
@@ -94,31 +101,20 @@ export const DEFAULT_PERSONA_CONFIG: KiaPersonaConfig = {
 const STORAGE_KEY = "gag_kia_persona_config";
 
 export function loadPersonaConfig(): KiaPersonaConfig {
-  if (typeof window === "undefined") return DEFAULT_PERSONA_CONFIG;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULT_PERSONA_CONFIG;
-    const parsed = JSON.parse(raw);
-    return {
-      ...DEFAULT_PERSONA_CONFIG,
-      ...parsed,
-      interpretBeforeResponding: parsed.interpretBeforeResponding !== false,
-      showInterpretationBadge: parsed.showInterpretationBadge !== false,
-      selectedTraits: Array.isArray(parsed.selectedTraits) ? parsed.selectedTraits : DEFAULT_PERSONA_CONFIG.selectedTraits,
-      prohibitedPatterns: Array.isArray(parsed.prohibitedPatterns) ? parsed.prohibitedPatterns : DEFAULT_PERSONA_CONFIG.prohibitedPatterns,
-    };
-  } catch {
-    return DEFAULT_PERSONA_CONFIG;
-  }
+  const parsed = safeStorage.getParsed<Partial<KiaPersonaConfig> | null>(STORAGE_KEY, null);
+  if (!parsed) return DEFAULT_PERSONA_CONFIG;
+  return {
+    ...DEFAULT_PERSONA_CONFIG,
+    ...parsed,
+    interpretBeforeResponding: false,
+    showInterpretationBadge: false,
+    selectedTraits: Array.isArray(parsed.selectedTraits) ? parsed.selectedTraits : DEFAULT_PERSONA_CONFIG.selectedTraits,
+    prohibitedPatterns: Array.isArray(parsed.prohibitedPatterns) ? parsed.prohibitedPatterns : DEFAULT_PERSONA_CONFIG.prohibitedPatterns,
+  };
 }
 
 export function savePersonaConfig(config: KiaPersonaConfig): void {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
-  } catch (e) {
-    console.warn("Failed to persist KiaPersonaConfig:", e);
-  }
+  safeStorage.setItem(STORAGE_KEY, JSON.stringify(config));
 }
 
 /**
@@ -134,18 +130,15 @@ export function buildPersonaSystemPrompt(config: KiaPersonaConfig = DEFAULT_PERS
     .join("\n");
 
   const interpretationSection = config.interpretBeforeResponding
-    ? `\nPROTOCOLO COGNITIVO OBRIGATÓRIO: "INTERPRETAR ANTES DE RESPONDER"
-Antes de emitir qualquer resposta, faz a tua leitura e interpretação estratégica do interlocutor:
-1. Analisa as entrelinhas, a real intenção e o momento de quem fala.
-2. Contextualiza no mercado de Luanda e no posicionamento de luxo/rentabilidade da GAG Visual.
-3. Inicia OBRIGATORIAMENTE toda resposta com a tag <interpretacao>...</interpretacao> contendo 1 a 3 frases com a tua leitura estratégica prévia.
-4. Após fechar a tag </interpretacao>, fala em pura linguagem natural e fluida, sem jargões de bot e sem repetir a pergunta.`
+    ? `\nDIRETRIZ DE RACIOCÍNIO PROATIVO:
+Pensa e raciocina estrategicamente sobre o problema e antecipa necessidades antes de emitir a resposta. Apresenta a tua resposta diretamente em texto livre e 100% conversacional, sem quaisquer tags ou marcações de sistema.`
     : "";
 
   const prohibitedSection = config.antiRoboticMode
     ? `\nREGRAS CRÍTICAS ANTI-ROBÔ (ESTRITAMENTE PROIBIDO):
+- NUNCA uses tags de sistema, metadados internos ou prefixos formatados.
 - NUNCA uses introduções pré-fabricadas como: "Excelente ponto para análise estratégica", "Com certeza posso ajudar com isso", ou "Como assistente virtual".
-- NUNCA repitas templates fixos de 4 tópicos ("1. Diagnóstico, 2. Desenvolvimento, 3. Distribuição, 4. Acompanhamento") a menos que expressamente solicitado.
+- NUNCA repitas templates fixos a menos que expressamente solicitado pelo utilizador.
 - Fala como uma mulher brilhante e executiva de verdade em Luanda: dinâmica, com raciocínio ágil, perspicaz e calorosa.`
     : "";
 

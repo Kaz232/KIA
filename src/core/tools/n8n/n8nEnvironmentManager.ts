@@ -4,6 +4,8 @@
  * for N8N Automation Platform, ensuring secure credential references and scoped deployments.
  */
 
+import { safeStorage } from "../../../utils/safeStorage";
+
 export interface N8NEnvironmentConfig {
   id: "development" | "staging" | "production" | string;
   name: string;
@@ -91,7 +93,7 @@ export class N8NEnvironmentManager {
     }
 
     try {
-      const stored = localStorage.getItem(STORAGE_KEY);
+      const stored = safeStorage.getItem(STORAGE_KEY);
       if (stored) {
         this.environments = JSON.parse(stored);
       } else {
@@ -99,7 +101,7 @@ export class N8NEnvironmentManager {
         this.saveToStorage();
       }
 
-      const active = localStorage.getItem(ACTIVE_ENV_KEY);
+      const active = safeStorage.getItem(ACTIVE_ENV_KEY);
       if (active && this.environments.some((e) => e.id === active)) {
         this.activeEnvironmentId = active;
       } else {
@@ -114,13 +116,8 @@ export class N8NEnvironmentManager {
   }
 
   private saveToStorage() {
-    if (typeof window === "undefined") return;
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.environments));
-      localStorage.setItem(ACTIVE_ENV_KEY, this.activeEnvironmentId);
-    } catch (e) {
-      console.error("[N8N Env Manager] Failed to persist credentials:", e);
-    }
+    safeStorage.setItem(STORAGE_KEY, JSON.stringify(this.environments));
+    safeStorage.setItem(ACTIVE_ENV_KEY, this.activeEnvironmentId);
   }
 
   public getAllEnvironments(): N8NEnvironmentConfig[] {

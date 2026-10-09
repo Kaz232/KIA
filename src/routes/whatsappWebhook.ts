@@ -69,18 +69,15 @@ router.post('/api/whatsapp/message', async (req, res) => {
             period: 'Trimestre Vigente',
             clientOrProject: clientName,
             clientPhone: cleanPhone,
-            executiveSummary: `Relatório gerado a partir de solicitação WhatsApp: "${normalizedInputMessage.slice(0, 100)}"`,
-            kpis: [
-              { metric: 'Retorno s/ Investimento (ROAS)', value: '3.8x', benchmark: '3.0x' },
-              { metric: 'Leads Qualificados em Luanda', value: '320 leads', benchmark: '+28%' }
-            ],
+            executiveSummary: `Relatório gerado a partir de solicitação: "${normalizedInputMessage.slice(0, 100)}"`,
+            kpis: [],
             financialSummaryAOA: {
-              budgetSpentAOA: 1500000,
-              estimatedRevenueAOA: 5700000,
-              roas: '3.8x'
+              budgetSpentAOA: 0,
+              estimatedRevenueAOA: 0,
+              roas: 'N/A'
             },
-            keyFindings: ['Campanhas de tráfego direto para WhatsApp obtiveram maior taxa de conversão em Angola.'],
-            recommendations: ['Manter taxa de sinal de 50% e priorizar atendimento 24/7.']
+            keyFindings: ['Relatório inicial gerado para acompanhamento de métricas.'],
+            recommendations: ['Definir métricas e KPIs objetivos com o cliente.']
           };
           generatedDoc = await generator.generateExecutiveReport(reportData);
         } else if (deliverableType === 'MEETING_MINUTES' || lower.includes('minuta')) {

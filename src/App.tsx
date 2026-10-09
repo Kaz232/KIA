@@ -25,7 +25,7 @@ import { SynergyWalkthroughModal } from "./components/SynergyWalkthroughModal";
 import { GlobalSynergyModal } from "./components/GlobalSynergyModal";
 import { ScenarioSimulatorModal } from "./components/ScenarioSimulatorModal";
 import { KazaDispatcherModal } from "./components/KazaDispatcherModal";
-import { KiaWakeWordBanner } from "./components/KiaWakeWordBanner";
+import { GagDocumentExportModal } from "./components/GagDocumentExportModal";
 
 const MainLayout: React.FC = () => {
   const {
@@ -39,6 +39,9 @@ const MainLayout: React.FC = () => {
     setIsScenarioModalOpen,
     isKazaModalOpen,
     setIsKazaModalOpen,
+    isDocumentExportModalOpen,
+    setIsDocumentExportModalOpen,
+    exportModalDocumentData,
   } = useApp();
 
   if (!isAuthenticated) {
@@ -51,10 +54,10 @@ const MainLayout: React.FC = () => {
       <Header />
 
       {/* Body: Sidebar + Active View */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden min-h-0">
         <Sidebar />
 
-        <main className={`flex-1 ${activeTab === "kia" ? "overflow-hidden p-2 sm:p-4" : "overflow-y-auto p-4 lg:p-6"} pb-20 md:pb-6`}>
+        <main className={`flex-1 flex flex-col min-h-0 ${activeTab === "kia" ? "overflow-hidden p-2 sm:p-4 pb-16 md:pb-4" : "overflow-y-auto p-4 lg:p-6 pb-20 md:pb-6"}`}>
           {activeTab === "dashboard" && <DashboardView />}
           {activeTab === "kia" && <KiaChatView />}
           {activeTab === "knowledge" && <KnowledgeBaseView />}
@@ -101,8 +104,12 @@ const MainLayout: React.FC = () => {
         onClose={() => setIsKazaModalOpen(false)}
       />
 
-      {/* Persistent Continuous Wake-Word ("KIA") Voice Detector HUD */}
-      <KiaWakeWordBanner />
+      {/* GAG Visual Document & File Export Modal */}
+      <GagDocumentExportModal
+        isOpen={isDocumentExportModalOpen}
+        onClose={() => setIsDocumentExportModalOpen(false)}
+        initialDocument={exportModalDocumentData || undefined}
+      />
     </div>
   );
 };

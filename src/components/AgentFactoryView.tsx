@@ -211,16 +211,16 @@ export const AgentFactoryView: React.FC = () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: `[SIMULAÇÃO DO AGENTE "${formData.name}"] Prompt de Teste: ${testInput}`,
-          contextData: { isSimulation: true, agentSlug: formData.slug },
+          message: `[TESTE DO AGENTE "${formData.name}"] Prompt: ${testInput}`,
+          contextData: { agentSlug: formData.slug },
         }),
       });
 
-      if (!res.ok) throw new Error("Erro na simulação");
+      if (!res.ok) throw new Error("Erro no teste do agente");
       const data = await res.json();
-      setTestOutput(data.content || "Resposta simulada com sucesso.");
+      setTestOutput(data.content || "Resposta gerada com sucesso.");
     } catch (e: any) {
-      setTestOutput(`Simulação: O agente respondeu de acordo com o System Prompt configurado.`);
+      setTestOutput(`Erro ao executar teste do agente: ${e?.message || "Verifique a sua conexão com a API."}`);
     } finally {
       setIsTesting(false);
     }

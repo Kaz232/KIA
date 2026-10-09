@@ -5,6 +5,11 @@ import { agentSupervisor } from "../engine/agentSupervisor";
 import { qaEngine } from "../engine/qaEngine";
 import { auditEventManager } from "../engine/auditEventManager";
 import { Phase1TestRunner } from "../engine/testRunner";
+import { toolExecutor } from "../engine/toolExecutor";
+import { executarToolViaOmniRoute } from "../engine/omniRouteClient";
+import { requireAuth, optionalAuth } from "../middleware/auth";
+import { agentBackgroundWorker } from "../services/agentWorker";
+import { systemHealthService } from "../services/systemHealthService";
 
 export const engineRouter = Router();
 
@@ -174,3 +179,141 @@ engineRouter.get("/status/:id", (req, res) => {
     trail,
   });
 });
+
+// 9. Tool Execution via OmniRoute Gateway with Local Contingency
+engineRouter.post("/execute-tool", optionalAuth, async (req, res) => {
+  try {
+    const { toolType, tool, payload, parameters } = req.body || {};
+    const toolName = tool || toolType;
+    const toolParams = parameters || payload || {};
+
+    if (!toolName) {
+      return res.status(400).json({ error: "Ferramenta inválida ou não informada (tool / toolType)." });
+    }
+
+    console.log(`[Engine Tool Execution] Encaminhando ${toolName} via OmniRoute gateway...`);
+    const omniResult = await executarToolViaOmniRoute(toolName, toolParams);
+
+    // Se o OmniRoute respondeu com sucesso
+    if (omniResult && omniResult.status !== "fallback") {
+      return res.json({
+        ...omniResult,
+        gateway: "omniroute_cloud",
+      });
+    }
+
+    // Caso o OmniRoute esteja em hibernação ou caia no fallback de contingência
+    if (typeof toolExecutor[toolName as keyof typeof toolExecutor] === 'function') {
+      const localResult = await toolExecutor[toolName as keyof typeof toolExecutor](toolParams);
+      return res.json({
+        ...localResult,
+        gateway: "local_contingency",
+        omniFallback: omniResult,
+      });
+    }
+
+    return res.json(omniResult);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// 10. Agent Background Worker Endpoints
+engineRouter.get("/worker/status", (_req, res) => {
+  res.json({
+    status: "ok",
+    worker: agentBackgroundWorker.getStatus(),
+    tasks: agentBackgroundWorker.getTasks(),
+    timestamp: new Date().toISOString(),
+  });
+});
+
+engineRouter.post("/worker/trigger", async (_req, res) => {
+  try {
+    await agentBackgroundWorker.runMaintenanceCycle();
+    res.json({
+      status: "ok",
+      message: "Ciclo de manutenção autónomo executado com sucesso.",
+      worker: agentBackgroundWorker.getStatus(),
+      tasks: agentBackgroundWorker.getTasks(),
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+engineRouter.post("/worker/enqueue", (req, res) => {
+  try {
+    const { title, description, assignedAgentId = "kia", priority = "MEDIUM" } = req.body || {};
+    if (!title) {
+      return res.status(400).json({ error: "Título da tarefa é obrigatório." });
+    }
+
+    const task = agentBackgroundWorker.enqueueTask({
+      title,
+      description,
+      assignedAgentId,
+      priority,
+    });
+
+    res.status(201).json({
+      status: "ok",
+      task,
+      message: "Tarefa autónoma adicionada à fila do worker com sucesso.",
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+engineRouter.post("/worker/execute-cancelled", async (_req, res) => {
+  try {
+    const result = await agentBackgroundWorker.executeCancelledTasks();
+    res.json({
+      status: "ok",
+      completedCount: result.completedCount,
+      tasks: result.tasks,
+      message: `${result.completedCount} tarefas canceladas foram executadas com sucesso.`,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+engineRouter.post("/tasks/execute-cancelled", async (_req, res) => {
+  try {
+    const result = await agentBackgroundWorker.executeCancelledTasks();
+    res.json({
+      status: "ok",
+      completedCount: result.completedCount,
+      tasks: result.tasks,
+      message: `${result.completedCount} tarefas canceladas foram reativadas e concluídas.`,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 11. System Health & Real-Time Gemini Latency Monitor Endpoints
+engineRouter.get("/health/system", (_req, res) => {
+  try {
+    const health = systemHealthService.getHealthData();
+    res.json(health);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+engineRouter.post("/health/ping-gemini", async (_req, res) => {
+  try {
+    const result = await systemHealthService.measureGeminiLatency();
+    res.json({
+      status: "ok",
+      ...result,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+

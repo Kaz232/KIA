@@ -24,7 +24,7 @@ import { FinancialAnalysis } from "../types";
 export const EconomicScannerTab: React.FC = () => {
   const { analyzeFinancialRAG, createTask, currentUser, playSfx, setActiveTab } = useApp();
 
-  const [companyName, setCompanyName] = useState("Empresa Retalho & Serviços Luanda Lda");
+  const [companyName, setCompanyName] = useState("");
   const [fiscalYear, setFiscalYear] = useState("2026");
   const [currency, setCurrency] = useState<"AOA" | "USD" | "EUR">("AOA");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -34,65 +34,29 @@ export const EconomicScannerTab: React.FC = () => {
 
   const presets = [
     {
-      title: "📊 Balancete Trimestral GAG Q3 2026",
-      desc: "Balancete de verificação com receitas de branding, consultoria de IA, salários e retenção AGT.",
-      company: "GAG Visual - Comércio Geral e Prestação de Serviços (SU), Lda",
-      text: `RELATÓRIO FINANCEIRO & BALANCETE Q3 2026
+      title: "📋 Modelo de Balancete Contabilístico (Estrutura AOA)",
+      desc: "Estrutura padrão para preenchimento de proveitos, custos diretos e despesas operacionais.",
+      company: "GAG Visual (SU), Lda",
+      text: `RELATÓRIO FINANCEIRO & BALANCETE
 EMPRESA: GAG Visual (SU), Lda · NIF: 5001654063 · Luanda, Angola
 MOEDA: Kwanzas (AOA)
 
 1. PROVEITOS E GANHOS OPERACIONAIS:
-- Prestação de Serviços de Branding & Identidade Visual: 38.500.000 Kz
-- Consultoria Estratégica de Marketing & IA Generativa: 42.000.000 Kz
-- Automação de Processos & Integrações Kaza Core: 25.500.000 Kz
-TOTAL RECEITA BRUTA: 106.000.000 Kz
+- Prestação de Serviços: [Inserir Valor] Kz
+TOTAL RECEITA BRUTA: [Inserir Valor] Kz
 
 2. CUSTOS DIRETOS DOS SERVIÇOS (COGS):
-- Infraestrutura Cloud, GPUs e Licenças de IA (Google, Supabase, Make): 12.800.000 Kz
-- Produção Gráfica e Ativos Multimédia Externos: 8.400.000 Kz
-TOTAL CUSTOS DIRETOS: 21.200.000 Kz
+- Produção e Fornecedores: [Inserir Valor] Kz
+TOTAL CUSTOS DIRETOS: [Inserir Valor] Kz
 
 3. DESPESAS OPERACIONAIS (OPEX):
-- Remunerações e Encargos da Equipa de Especialistas: 34.000.000 Kz
-- Instalações, Comunicações e Logística Luanda: 6.500.000 Kz
-- Marketing Próprio e Aquisição de Clientes (CAC): 7.200.000 Kz
-TOTAL OPEX: 47.700.000 Kz
+- Salários e Encargos: [Inserir Valor] Kz
+- Comunicações e Logística: [Inserir Valor] Kz
+TOTAL OPEX: [Inserir Valor] Kz
 
 4. ENQUADRAMENTO FISCAL (AGT):
-- Retenção na Fonte de Serviços (6.5%) sofrida pelos clientes
-- IVA Regime Geral (14%) faturado e dedutível
-- IRT da folha salarial retido na fonte`,
-    },
-    {
-      title: "🏪 Demonstração Financeira Retalho Luanda",
-      desc: "DRE de grande rede de retalho e distribuição com margens brutas e projeções de fluxo de caixa.",
-      company: "Distribuidora & Supermercados Luanda Sul SA",
-      text: `RELATÓRIO FINANCEIRO ANUAL - RETALHO ALIMENTAR & BENS DE CONSUMO
-EMPRESA: Distribuidora & Supermercados Luanda Sul SA
-PERÍODO: Exercício 2025/2026
-
-- Volume de Faturação Bruta: 340.000.000 Kz
-- Custo das Mercadorias Vendidas (CMV): 215.000.000 Kz
-- Custos com Pessoal e Lojas (12 unidades em Luanda e Benguela): 62.000.000 Kz
-- Eletricidade (Geradores industriais e combustível): 18.500.000 Kz
-- Logística e Frota de Distribuição: 14.200.000 Kz
-- Custos Financeiros e Câmbio BNA (USD/AOA): 8.900.000 Kz
-- IVA liquidado: 14%`,
-    },
-    {
-      title: "🏦 Proposta de Investimento B2B & ROI",
-      desc: "Estudo de viabilidade económica para implantação de IA em instituição bancária angolana.",
-      company: "Banco Comercial e de Investimento de Angola",
-      text: `ESTUDO DE VIABILIDADE ECONÓMICA - PROJETO IA CORPORATIVA GAG CORE
-CLIENTE: Banco Comercial e de Investimento
-ORÇAMENTO DO PROJETO: 65.000.000 Kz
-
-BENEFÍCIOS ECONÓMICOS PROJETADOS A 12 MESES:
-- Redução de tempo na triagem de crédito: 75% de economia de horas-homem (estimado em 38.000.000 Kz/ano)
-- Automação de OCR em faturas e balancetes: redução de erros operacionais (economia estimada em 24.000.000 Kz)
-- Aumento de conversão de novos clientes digitais via IA: receita adicional estimada em 45.000.000 Kz
-- Payback esperado: 7 meses
-- Retenção na Fonte aplicável: 6.5%`,
+- Retenção na Fonte de Serviços (6.5%)
+- IVA Regime Geral (14%)`,
     },
   ];
 

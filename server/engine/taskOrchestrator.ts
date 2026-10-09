@@ -168,6 +168,20 @@ export class TaskOrchestrator {
       return step;
     });
   }
+
+  /**
+   * Dispatches a task to a specialized target agent
+   */
+  public async dispatch(targetAgentId: string, taskDescription: string) {
+    const steps = this.decomposeGoal(taskDescription, targetAgentId);
+    return {
+      success: true,
+      dispatchedTo: targetAgentId,
+      taskDescription,
+      steps,
+      dispatchedAt: new Date().toISOString()
+    };
+  }
 }
 
 export const taskOrchestrator = TaskOrchestrator.getInstance();

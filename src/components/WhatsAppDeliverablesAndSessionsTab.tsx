@@ -19,7 +19,19 @@ import {
   TrendingUp,
   FileCheck,
   ExternalLink,
+  FileDown,
+  Printer,
+  FileCode,
+  Table,
+  Globe,
 } from "lucide-react";
+import { useApp } from "../context/AppContext";
+import {
+  exportDocumentAsPdf,
+  exportDocumentAsDocx,
+  exportDocumentAsMarkdown,
+  exportDocumentAsCsv,
+} from "../utils/documentExport";
 import { normalizeMarkdownForWhatsApp } from "../utils/whatsappTextNormalizer";
 import { GeneratedDeliverable } from "../services/deliverableGenerator";
 
@@ -34,6 +46,7 @@ interface UnifiedSession {
 }
 
 export const WhatsAppDeliverablesAndSessionsTab: React.FC = () => {
+  const { openDocumentExportModal } = useApp();
   const [activeSubView, setActiveSubView] = useState<"deliverables" | "sessions" | "normalizer" | "make_webhook">("deliverables");
   const [deliverableType, setDeliverableType] = useState<"COMMERCIAL_PROPOSAL" | "EXECUTIVE_REPORT" | "MEETING_MINUTES">("COMMERCIAL_PROPOSAL");
   const [copiedField, setCopiedField] = useState<string | null>(null);
@@ -47,10 +60,10 @@ export const WhatsAppDeliverablesAndSessionsTab: React.FC = () => {
   const [makeTestResult, setMakeTestResult] = useState<any>(null);
 
   // Proposal State
-  const [clientName, setClientName] = useState("Dra. Paula Fernandes");
-  const [companyName, setCompanyName] = useState("Farmácias Saúde & Vida Luanda");
-  const [clientPhone, setClientPhone] = useState("+244 923 884 190");
-  const [projectScope, setProjectScope] = useState("Implementação de Identidade Visual Corporativa de Elite, Vídeos Institucionais e Campanhas de Tráfego Pago para novas filiais em Luanda.");
+  const [clientName, setClientName] = useState("");
+  const [companyName, setCompanyName] = useState("");
+  const [clientPhone, setClientPhone] = useState("");
+  const [projectScope, setProjectScope] = useState("");
   const [urgency48h, setUrgency48h] = useState(false);
   const [sendToWhatsApp, setSendToWhatsApp] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -58,42 +71,27 @@ export const WhatsAppDeliverablesAndSessionsTab: React.FC = () => {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   // Report State
-  const [reportTitle, setReportTitle] = useState("Relatório de Performance Digital Q3");
-  const [period, setPeriod] = useState("Julho - Setembro 2026");
-  const [budgetSpentAOA, setBudgetSpentAOA] = useState("1850000");
-  const [estimatedRevenueAOA, setEstimatedRevenueAOA] = useState("7400000");
-  const [roas, setRoas] = useState("4.0x");
-  const [executiveSummary, setExecutiveSummary] = useState("Campanhas com ROAS de 4.0x gerando aumento de 32% em leads qualificados via WhatsApp.");
+  const [reportTitle, setReportTitle] = useState("");
+  const [period, setPeriod] = useState("");
+  const [budgetSpentAOA, setBudgetSpentAOA] = useState("");
+  const [estimatedRevenueAOA, setEstimatedRevenueAOA] = useState("");
+  const [roas, setRoas] = useState("");
+  const [executiveSummary, setExecutiveSummary] = useState("");
 
   // Meeting Minutes State
-  const [meetingTitle, setMeetingTitle] = useState("Alinhamento Estratégico com Diretoria Comercial");
-  const [meetingParticipants, setMeetingParticipants] = useState("Josemar Gourgel (Owner), Dra. Paula, Eng. Teresa");
-  const [ownerDirectives, setOwnerDirectives] = useState("Sinal obrigatório de 50% confirmado; Produção audiovisual agendada para quarta-feira.");
+  const [meetingTitle, setMeetingTitle] = useState("");
+  const [meetingParticipants, setMeetingParticipants] = useState("");
+  const [ownerDirectives, setOwnerDirectives] = useState("");
 
   // Unified Sessions State
   const [sessions, setSessions] = useState<UnifiedSession[]>([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [syncWebSessionId, setSyncWebSessionId] = useState("kia-main-session");
-  const [syncTargetPhone, setSyncTargetPhone] = useState("+244 923 884 190");
+  const [syncTargetPhone, setSyncTargetPhone] = useState("");
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
   // Normalizer Interactive Sandbox
-  const [markdownInput, setMarkdownInput] = useState(
-`# Proposta Estratégica GAG Visual
-## Pacote de Lançamento
-
-| Entregável | Prazo | Valor (AOA) |
-|---|---|---|
-| Rebranding Completo | 10 dias | 1.200.000 AOA |
-| Gestão Tráfego Pago | Mensal | 650.000 AOA |
-
-\`\`\`json
-{ "sinal": "50%", "urgencia": "48h" }
-\`\`\`
-
-**Atenção:** Sinal prévio obrigatório de 50% para validação da ordem de serviço.
-Consulte nosso [Portal Executivo](https://gagvisual.ao).`
-  );
+  const [markdownInput, setMarkdownInput] = useState("");
 
   const normalizedOutput = normalizeMarkdownForWhatsApp(markdownInput);
 
@@ -110,18 +108,7 @@ Consulte nosso [Portal Executivo](https://gagvisual.ao).`
       const data = await res.json();
       setSessions(data.sessions || []);
     } catch {
-      // Fallback local mock
-      setSessions([
-        {
-          sessionId: "session_wa_244923884190",
-          phone: "+244 923 884 190",
-          name: "Dra. Paula Fernandes",
-          lastMessage: "Confirmamos o interesse na proposta com sinal de 50%.",
-          lastActivity: new Date().toISOString(),
-          messageCount: 8,
-          channel: "WHATSAPP",
-        },
-      ]);
+      setSessions([]);
     } finally {
       setIsLoadingSessions(false);
     }
@@ -170,15 +157,13 @@ Consulte nosso [Portal Executivo](https://gagvisual.ao).`
         clientPhone,
         executiveSummary,
         financialSummaryAOA: {
-          budgetSpentAOA: Number(budgetSpentAOA) || 1850000,
-          estimatedRevenueAOA: Number(estimatedRevenueAOA) || 7400000,
-          roas,
+          budgetSpentAOA: Number(budgetSpentAOA) || 0,
+          estimatedRevenueAOA: Number(estimatedRevenueAOA) || 0,
+          roas: roas || "N/A",
         },
-        kpis: [
-          { metric: "Retorno s/ Investimento (ROAS)", value: roas, benchmark: "3.2x" },
-          { metric: "Leads Qualificados no WhatsApp", value: "418 leads", benchmark: "+32%" },
-          { metric: "Custo por Lead (CPL)", value: "4.425 AOA", benchmark: "-18%" },
-        ],
+        kpis: roas ? [
+          { metric: "Retorno s/ Investimento (ROAS)", value: roas, benchmark: "Meta da Empresa" },
+        ] : [],
         keyFindings: [
           "O canal de WhatsApp converte 3x mais que landing pages estáticas em Luanda.",
           "Vídeos com abordagem local tiveram taxa de retenção de 78%.",
@@ -578,16 +563,172 @@ Consulte nosso [Portal Executivo](https://gagvisual.ao).`
               </div>
 
               {generatedResult && (
-                <div className="pt-2 flex items-center justify-between border-t border-slate-800 text-xs">
-                  <span className="text-slate-400">Documento HTML/PDF:</span>
-                  <a
-                    href={`data:text/html;charset=utf-8,${encodeURIComponent(generatedResult.htmlContent)}`}
-                    download={`${generatedResult.title.replace(/\s+/g, "_")}.html`}
-                    className="px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-amber-400 font-bold border border-slate-800 flex items-center gap-1.5 transition-colors"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>Descarregar HTML</span>
-                  </a>
+                <div className="pt-3 border-t border-slate-800 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1">
+                      <FileDown className="w-3.5 h-3.5" />
+                      <span>Exportação Oficial GAG Visual:</span>
+                    </span>
+                    <button
+                      onClick={() => {
+                        const parsedBudget = Number(budgetSpentAOA) || 1250000;
+                        openDocumentExportModal({
+                          title: generatedResult.title,
+                          type: deliverableType,
+                          clientName: clientName || "Direção Executiva",
+                          companyName: companyName || "Cliente GAG Visual",
+                          clientPhone: clientPhone || "+244 923 884 190",
+                          summary: generatedResult.whatsAppSummary || "Documento estratégico gerado no GAG Core OS",
+                          urgency48h: urgency48h,
+                          require50PercentDeposit: true,
+                          includeIVA: true,
+                          includeTaxRetention: true,
+                          items: [
+                            {
+                              description: generatedResult.title,
+                              quantity: 1,
+                              unitPriceAOA: parsedBudget,
+                              totalAOA: parsedBudget,
+                            },
+                          ],
+                        });
+                      }}
+                      className="text-[11px] font-bold text-black bg-amber-400 hover:bg-amber-300 px-2.5 py-1 rounded-lg flex items-center gap-1 shadow transition-colors"
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      <span>Abrir Central de Exportação</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs">
+                    {/* PDF A4 */}
+                    <button
+                      onClick={() => {
+                        const parsedBudget = Number(budgetSpentAOA) || 1250000;
+                        exportDocumentAsPdf({
+                          title: generatedResult.title,
+                          type: deliverableType,
+                          clientName: clientName || "Cliente",
+                          companyName: companyName || "Empresa",
+                          clientPhone: clientPhone || "+244 923 884 190",
+                          summary: generatedResult.whatsAppSummary,
+                          urgency48h: urgency48h,
+                          require50PercentDeposit: true,
+                          includeIVA: true,
+                          includeTaxRetention: true,
+                          items: [
+                            {
+                              description: generatedResult.title,
+                              quantity: 1,
+                              unitPriceAOA: parsedBudget,
+                              totalAOA: parsedBudget,
+                            },
+                          ],
+                        });
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-bold flex items-center justify-center gap-1 transition-colors"
+                      title="Imprimir ou Salvar PDF A4 com Marca GAG"
+                    >
+                      <Printer className="w-3.5 h-3.5" />
+                      <span>PDF A4</span>
+                    </button>
+
+                    {/* Word .docx */}
+                    <button
+                      onClick={() => {
+                        const parsedBudget = Number(budgetSpentAOA) || 1250000;
+                        exportDocumentAsDocx({
+                          title: generatedResult.title,
+                          type: deliverableType,
+                          clientName: clientName || "Cliente",
+                          companyName: companyName || "Empresa",
+                          clientPhone: clientPhone || "+244 923 884 190",
+                          summary: generatedResult.whatsAppSummary,
+                          urgency48h: urgency48h,
+                          require50PercentDeposit: true,
+                          includeIVA: true,
+                          includeTaxRetention: true,
+                          items: [
+                            {
+                              description: generatedResult.title,
+                              quantity: 1,
+                              unitPriceAOA: parsedBudget,
+                              totalAOA: parsedBudget,
+                            },
+                          ],
+                        });
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border border-blue-500/40 font-bold flex items-center justify-center gap-1 transition-colors"
+                      title="Descarregar Microsoft Word (.docx)"
+                    >
+                      <FileCode className="w-3.5 h-3.5" />
+                      <span>Word (.docx)</span>
+                    </button>
+
+                    {/* Markdown .md */}
+                    <button
+                      onClick={() => {
+                        const parsedBudget = Number(budgetSpentAOA) || 1250000;
+                        exportDocumentAsMarkdown({
+                          title: generatedResult.title,
+                          type: deliverableType,
+                          clientName: clientName || "Cliente",
+                          companyName: companyName || "Empresa",
+                          clientPhone: clientPhone || "+244 923 884 190",
+                          summary: generatedResult.whatsAppSummary,
+                          urgency48h: urgency48h,
+                          require50PercentDeposit: true,
+                          includeIVA: true,
+                          includeTaxRetention: true,
+                          items: [
+                            {
+                              description: generatedResult.title,
+                              quantity: 1,
+                              unitPriceAOA: parsedBudget,
+                              totalAOA: parsedBudget,
+                            },
+                          ],
+                        });
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold flex items-center justify-center gap-1 transition-colors"
+                      title="Descarregar Markdown (.md)"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                      <span>MD (.md)</span>
+                    </button>
+
+                    {/* CSV / Excel */}
+                    <button
+                      onClick={() => {
+                        const parsedBudget = Number(budgetSpentAOA) || 1250000;
+                        exportDocumentAsCsv({
+                          title: generatedResult.title,
+                          type: deliverableType,
+                          clientName: clientName || "Cliente",
+                          companyName: companyName || "Empresa",
+                          clientPhone: clientPhone || "+244 923 884 190",
+                          summary: generatedResult.whatsAppSummary,
+                          urgency48h: urgency48h,
+                          require50PercentDeposit: true,
+                          includeIVA: true,
+                          includeTaxRetention: true,
+                          items: [
+                            {
+                              description: generatedResult.title,
+                              quantity: 1,
+                              unitPriceAOA: parsedBudget,
+                              totalAOA: parsedBudget,
+                            },
+                          ],
+                        });
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 font-bold flex items-center justify-center gap-1 transition-colors"
+                      title="Descarregar CSV para Excel"
+                    >
+                      <Table className="w-3.5 h-3.5" />
+                      <span>CSV Excel</span>
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

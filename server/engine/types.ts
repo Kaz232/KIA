@@ -92,7 +92,12 @@ export type AgentCapability =
   | "READ_CODE"
   | "WRITE_CODE"
   | "EDIT_CODE"
-  | "DEPLOY";
+  | "DEPLOY"
+  | "GENERATE_CONTENT"
+  | "CREATE_TASK"
+  | "GENERATE_VISUAL_ASSET"
+  | "FINANCIAL_CALCULUS"
+  | "DISPATCH_AGENT";
 
 export interface CapabilityPolicy {
   allowed: AgentCapability[];

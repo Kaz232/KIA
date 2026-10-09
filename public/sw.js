@@ -26,23 +26,29 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Pass-through API calls to network with local fallback
-  if (event.request.url.includes('/api/')) {
-    event.respondWith(
-      fetch(event.request).catch(() => {
-        return new Response(JSON.stringify({
-          error: 'Offline mode active. Local fallback operating.',
-          offline: true,
-          timestamp: new Date().toISOString()
-        }), {
-          headers: { 'Content-Type': 'application/json' }
-        });
-      })
-    );
+  const url = event.request.url;
+
+  // Never intercept non-GET requests
+  if (event.request.method !== 'GET') {
     return;
   }
 
-  // Stale-while-revalidate for static assets
+  // Strictly bypass API, WebSocket, Vite development modules, and HMR
+  if (
+    url.includes('/api/') ||
+    url.includes('/live') ||
+    url.includes('/@vite') ||
+    url.includes('/@react-refresh') ||
+    url.includes('/src/') ||
+    url.includes('?t=') ||
+    url.includes('vite') ||
+    url.includes('hot-update') ||
+    url.includes('localhost:')
+  ) {
+    return;
+  }
+
+  // Stale-while-revalidate for static assets only
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       const fetchPromise = fetch(event.request).then((networkResponse) => {

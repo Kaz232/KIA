@@ -1,4 +1,5 @@
 import { SystemIncident } from "../types";
+import { safeStorage } from "./safeStorage";
 
 const INCIDENTS_STORAGE_KEY = "gag_system_incidents";
 const RESOLUTION_RULES_STORAGE_KEY = "gag_error_prevention_rules";
@@ -32,24 +33,14 @@ export function generateErrorSignature(msg: string, component: string): string {
  * Retrieves all tracked system incidents
  */
 export function getSystemIncidents(): SystemIncident[] {
-  try {
-    const raw = localStorage.getItem(INCIDENTS_STORAGE_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
+  return safeStorage.getParsed<SystemIncident[]>(INCIDENTS_STORAGE_KEY, []);
 }
 
 /**
  * Saves or updates incidents list
  */
 function saveIncidents(incidents: SystemIncident[]) {
-  try {
-    localStorage.setItem(INCIDENTS_STORAGE_KEY, JSON.stringify(incidents.slice(0, 100)));
-  } catch (e) {
-    console.warn("Failed to persist incidents to localStorage:", e);
-  }
+  safeStorage.setItem(INCIDENTS_STORAGE_KEY, JSON.stringify(incidents.slice(0, 100)));
 }
 
 /**
@@ -186,9 +177,5 @@ export function recordAndResolveIncident(options: ErrorReportOptions): SystemInc
  * Clears incidents history if requested
  */
 export function clearSystemIncidents(): void {
-  try {
-    localStorage.removeItem(INCIDENTS_STORAGE_KEY);
-  } catch (e) {
-    console.warn("Failed to clear incidents:", e);
-  }
+  safeStorage.removeItem(INCIDENTS_STORAGE_KEY);
 }

@@ -5,6 +5,7 @@
  */
 
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { safeStorage } from "../utils/safeStorage";
 
 export interface DatabaseConfig {
   url: string;
@@ -392,9 +393,9 @@ export class SupabasePersistenceClient {
 
     // Check browser context
     if (!url && typeof window !== "undefined") {
-      url = localStorage.getItem("gag_supabase_url") || "";
-      anonKey = localStorage.getItem("gag_supabase_anon_key") || "";
-      serviceRoleKey = localStorage.getItem("gag_supabase_service_key") || "";
+      url = safeStorage.getItem("gag_supabase_url") || "";
+      anonKey = safeStorage.getItem("gag_supabase_anon_key") || "";
+      serviceRoleKey = safeStorage.getItem("gag_supabase_service_key") || "";
     }
 
     const isConfigured = Boolean(

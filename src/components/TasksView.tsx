@@ -38,6 +38,7 @@ export const TasksView: React.FC = () => {
     deleteTask,
     executeTaskWithAgent,
     executeBatchTasks,
+    executeCancelledTasks,
     orchestratePlanWithKIA,
     isExecutingTask,
     agents,
@@ -86,6 +87,7 @@ export const TasksView: React.FC = () => {
     { id: "REVIEW", label: "Em Revisão (REVIEW)" },
     { id: "DONE", label: "Concluído (DONE)" },
     { id: "BLOCKED", label: "Bloqueado (BLOCKED)" },
+    { id: "CANCELLED", label: "Canceladas (CANCELLED)" },
   ];
 
   const priorities: { id: TaskPriority | "ALL"; label: string }[] = [
@@ -212,6 +214,7 @@ export const TasksView: React.FC = () => {
   };
 
   const doneCount = tasks.filter((t) => t.status === "DONE").length;
+  const cancelledCount = tasks.filter((t) => t.status === "CANCELLED").length;
   const pendingCount = tasks.length - doneCount;
 
   return (
@@ -259,6 +262,33 @@ export const TasksView: React.FC = () => {
               <>
                 <Zap className="w-4 h-4 text-yellow-300" />
                 <span>⚡ Executar Todas as Tarefas ({pendingCount})</span>
+              </>
+            )}
+          </button>
+
+          {/* Botão de Executar Todas as Tarefas Canceladas */}
+          <button
+            onClick={async () => {
+              playSfx("action");
+              await executeCancelledTasks();
+            }}
+            disabled={isExecutingTask}
+            className={`flex items-center space-x-2 px-4 py-2.5 font-bold text-xs rounded-xl shadow-lg transition-all active:scale-95 disabled:opacity-50 cursor-pointer ${
+              cancelledCount > 0
+                ? "bg-gradient-to-r from-rose-500 via-amber-500 to-emerald-500 hover:from-rose-400 hover:to-emerald-400 text-white shadow-rose-500/20 ring-1 ring-rose-400/50 animate-pulse"
+                : "bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:bg-slate-800/80"
+            }`}
+            title="Reativar e colocar os agentes da GAG Visual a executar todas as tarefas canceladas"
+          >
+            {isExecutingTask ? (
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin text-amber-300" />
+                <span>A Executar...</span>
+              </>
+            ) : (
+              <>
+                <RefreshCw className={`w-4 h-4 ${cancelledCount > 0 ? "text-amber-300 animate-spin" : "text-rose-400"}`} />
+                <span>⚡ Executar Canceladas ({cancelledCount})</span>
               </>
             )}
           </button>
@@ -376,6 +406,13 @@ export const TasksView: React.FC = () => {
                         <span>Entregável Concluído</span>
                       </span>
                     )}
+
+                    {task.status === "CANCELLED" && (
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-rose-500/20 border border-rose-500/30 text-rose-300 font-bold flex items-center space-x-1">
+                        <AlertCircle className="w-3 h-3 text-rose-400" />
+                        <span>Cancelada (Reativável)</span>
+                      </span>
+                    )}
                   </div>
 
                   <h3 className="text-sm font-bold text-white group-hover:text-amber-300 transition-colors">
@@ -451,6 +488,8 @@ export const TasksView: React.FC = () => {
                         ? "bg-purple-500/20 text-purple-300 border-purple-500/40"
                         : task.status === "BLOCKED"
                         ? "bg-red-500/20 text-red-300 border-red-500/40"
+                        : task.status === "CANCELLED"
+                        ? "bg-rose-500/20 text-rose-300 border-rose-500/40"
                         : "bg-slate-900 text-slate-300 border-slate-700"
                     }`}
                   >
@@ -459,6 +498,7 @@ export const TasksView: React.FC = () => {
                     <option value="REVIEW">REVIEW</option>
                     <option value="DONE">DONE</option>
                     <option value="BLOCKED">BLOCKED</option>
+                    <option value="CANCELLED">CANCELLED</option>
                   </select>
 
                   <button
@@ -627,6 +667,7 @@ export const TasksView: React.FC = () => {
                     <option value="REVIEW">REVIEW</option>
                     <option value="DONE">DONE</option>
                     <option value="BLOCKED">BLOCKED</option>
+                    <option value="CANCELLED">CANCELLED (Cancelada)</option>
                   </select>
                 </div>
               </div>

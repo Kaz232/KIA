@@ -15,11 +15,12 @@ import {
   ExternalLink,
   Layers,
   Wand2,
+  FileDown,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
 
 export const MultimodalStudioView: React.FC = () => {
-  const { recordAuditLog } = useApp();
+  const { recordAuditLog, openDocumentExportModal } = useApp();
   const [activeTab, setActiveTab] = useState<"image" | "video" | "search" | "live">("image");
 
   // Image Generation State
@@ -324,14 +325,37 @@ export const MultimodalStudioView: React.FC = () => {
                   alt="Generated Result"
                   className="rounded-xl border border-amber-500/30 max-h-80 w-auto shadow-2xl"
                 />
-                <a
-                  href={generatedImage}
-                  download="gag-visual-ai.png"
-                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-amber-300 text-xs font-bold rounded-xl flex items-center space-x-2 transition-colors"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>Descarregar Imagem PNG</span>
-                </a>
+                <div className="flex flex-wrap gap-2 justify-center">
+                  <a
+                    href={generatedImage}
+                    download="gag-visual-ai.png"
+                    className="px-4 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-amber-300 text-xs font-bold rounded-xl flex items-center space-x-2 transition-colors"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Descarregar PNG</span>
+                  </a>
+                  <button
+                    onClick={() => {
+                      openDocumentExportModal({
+                        title: "Entregável Criativo — Produção Visual IA",
+                        type: "CREATIVE_BRIEF",
+                        summary: `Ativo criativo e identidade gerados no estúdio multimodal GAG Visual: "${imagePrompt}"`,
+                        items: [
+                          {
+                            description: `Criação e Licenciamento: ${imagePrompt.slice(0, 60) || "Ativo Visual"}`,
+                            quantity: 1,
+                            unitPriceAOA: 850000,
+                            totalAOA: 850000,
+                          },
+                        ],
+                      });
+                    }}
+                    className="px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-xs font-bold rounded-xl flex items-center space-x-2 transition-colors"
+                  >
+                    <FileDown className="w-4 h-4 text-amber-400" />
+                    <span>Exportar Documento GAG</span>
+                  </button>
+                </div>
               </div>
             ) : (
               <div className="text-center space-y-2 text-slate-500">
@@ -487,11 +511,34 @@ export const MultimodalStudioView: React.FC = () => {
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                   Google Search Grounded
                 </span>
-                {searchQueries.length > 0 && (
-                  <span className="text-[11px] text-slate-400">
-                    Consultas: {searchQueries.join(", ")}
-                  </span>
-                )}
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      openDocumentExportModal({
+                        title: "Relatório de Pesquisa & Inteligência de Mercado",
+                        type: "EXECUTIVE_REPORT",
+                        summary: `Pesquisa de mercado executiva sobre "${searchQuery}":\n\n${searchResult.slice(0, 500)}...`,
+                        items: [
+                          {
+                            description: "Relatório Analítico & Pesquisa de Mercado Grounded",
+                            quantity: 1,
+                            unitPriceAOA: 450000,
+                            totalAOA: 450000,
+                          },
+                        ],
+                      });
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-slate-950 border border-amber-500/40 text-amber-300 hover:bg-slate-800 text-[11px] font-bold flex items-center gap-1.5 transition-colors"
+                  >
+                    <FileDown className="w-3.5 h-3.5" />
+                    <span>Exportar Relatório</span>
+                  </button>
+                  {searchQueries.length > 0 && (
+                    <span className="text-[11px] text-slate-400">
+                      Consultas: {searchQueries.join(", ")}
+                    </span>
+                  )}
+                </div>
               </div>
 
               <div className="text-xs text-slate-200 leading-relaxed whitespace-pre-wrap">

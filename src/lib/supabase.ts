@@ -1,8 +1,9 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { safeStorage } from "../utils/safeStorage";
 
 const metaEnv = (import.meta as any).env || {};
-const supabaseUrl = (metaEnv.VITE_SUPABASE_URL as string) || (typeof localStorage !== "undefined" ? localStorage.getItem("gag_supabase_url") || "" : "");
-const supabaseAnonKey = (metaEnv.VITE_SUPABASE_ANON_KEY as string) || (typeof localStorage !== "undefined" ? localStorage.getItem("gag_supabase_anon_key") || "" : "");
+const supabaseUrl = (metaEnv.VITE_SUPABASE_URL as string) || safeStorage.getItem("gag_supabase_url") || "";
+const supabaseAnonKey = (metaEnv.VITE_SUPABASE_ANON_KEY as string) || safeStorage.getItem("gag_supabase_anon_key") || "";
 
 export const isSupabaseConfigured = Boolean(
   supabaseUrl &&
@@ -35,8 +36,8 @@ export function getSupabase(): SupabaseClient | null {
   }
 
   const currentMeta = (import.meta as any).env || {};
-  const currentUrl = (currentMeta.VITE_SUPABASE_URL as string) || (typeof localStorage !== "undefined" ? localStorage.getItem("gag_supabase_url") || "" : "");
-  const currentKey = (currentMeta.VITE_SUPABASE_ANON_KEY as string) || (typeof localStorage !== "undefined" ? localStorage.getItem("gag_supabase_anon_key") || "" : "");
+  const currentUrl = (currentMeta.VITE_SUPABASE_URL as string) || safeStorage.getItem("gag_supabase_url") || "";
+  const currentKey = (currentMeta.VITE_SUPABASE_ANON_KEY as string) || safeStorage.getItem("gag_supabase_anon_key") || "";
 
   if (currentUrl && currentKey && currentUrl.startsWith("http") && currentKey.length > 10) {
     try {

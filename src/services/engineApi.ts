@@ -81,14 +81,25 @@ export interface TestSuiteResponse {
   }[];
 }
 
+import { auth } from "./firebase";
+
 class EngineApiService {
   private baseUrl = "/api/engine";
+
+  private async getHeaders(): Promise<HeadersInit> {
+    const headers: HeadersInit = { "Content-Type": "application/json" };
+    const token = await auth.currentUser?.getIdToken();
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    return headers;
+  }
 
   /**
    * Health status of Engine Subsystem
    */
   public async getHealth(): Promise<any> {
-    const res = await fetch(`${this.baseUrl}/health`);
+    const res = await fetch(`${this.baseUrl}/health`, { headers: await this.getHeaders() });
     if (!res.ok) throw new Error("Failed to fetch engine health");
     return res.json();
   }
@@ -99,7 +110,7 @@ class EngineApiService {
   public async executePipeline(request: Phase1ExecutionRequest): Promise<Phase1ExecutionResponse> {
     const res = await fetch(`${this.baseUrl}/execute`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await this.getHeaders(),
       body: JSON.stringify(request),
     });
 
@@ -117,7 +128,7 @@ class EngineApiService {
   public async orchestrateGoal(goal: string, primaryAgentId = "kia"): Promise<{ steps: Phase1Step[]; stepsCount: number }> {
     const res = await fetch(`${this.baseUrl}/orchestrate`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await this.getHeaders(),
       body: JSON.stringify({ goal, primaryAgentId }),
     });
 
@@ -136,7 +147,7 @@ class EngineApiService {
   }): Promise<any> {
     const res = await fetch(`${this.baseUrl}/supervise`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await this.getHeaders(),
       body: JSON.stringify(params),
     });
 
@@ -157,7 +168,7 @@ class EngineApiService {
   }): Promise<any> {
     const res = await fetch(`${this.baseUrl}/qa-evaluate`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await this.getHeaders(),
       body: JSON.stringify(params),
     });
 
@@ -169,7 +180,7 @@ class EngineApiService {
    * Retrieves the global audit chain and its cryptographic integrity status
    */
   public async getAuditTrail(limit = 50): Promise<{ integrity: { isValid: boolean; checkedCount: number }; chain: any[] }> {
-    const res = await fetch(`${this.baseUrl}/audit-trail?limit=${limit}`);
+    const res = await fetch(`${this.baseUrl}/audit-trail?limit=${limit}`, { headers: await this.getHeaders() });
     if (!res.ok) throw new Error("Failed to fetch audit trail");
     return res.json();
   }
@@ -180,7 +191,7 @@ class EngineApiService {
   public async runTestSuite(): Promise<TestSuiteResponse> {
     const res = await fetch(`${this.baseUrl}/test-suite`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: await this.getHeaders(),
     });
 
     if (!res.ok) throw new Error("Failed to run Phase 1 test suite");

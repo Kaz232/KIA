@@ -21,6 +21,7 @@ import {
   Play,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
+import { safeStorage } from "../utils/safeStorage";
 
 interface SynergyWalkthroughModalProps {
   isOpen: boolean;
@@ -335,7 +336,7 @@ export const SynergyWalkthroughModal: React.FC<SynergyWalkthroughModalProps> = (
             <button
               onClick={() => {
                 triggerAgentSynergyExecution();
-                localStorage.setItem("gag_synergy_onboarding_seen", "true");
+                safeStorage.setItem("gag_synergy_onboarding_seen", "true");
                 onClose();
                 setActiveTab("kia");
               }}
@@ -357,7 +358,7 @@ export const SynergyWalkthroughModal: React.FC<SynergyWalkthroughModalProps> = (
     if (currentStep < steps.length - 1) {
       setCurrentStep((prev) => prev + 1);
     } else {
-      localStorage.setItem("gag_synergy_onboarding_seen", "true");
+      safeStorage.setItem("gag_synergy_onboarding_seen", "true");
       onClose();
     }
   };
@@ -398,7 +399,7 @@ export const SynergyWalkthroughModal: React.FC<SynergyWalkthroughModalProps> = (
 
           <button
             onClick={() => {
-              localStorage.setItem("gag_synergy_onboarding_seen", "true");
+              safeStorage.setItem("gag_synergy_onboarding_seen", "true");
               onClose();
             }}
             className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"

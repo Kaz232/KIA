@@ -57,10 +57,10 @@ export const Sidebar: React.FC = () => {
     },
     {
       id: "whatsapp",
-      label: "WhatsApp Business API",
+      label: "WhatsApp Business",
       icon: MessageSquare,
       highlight: true,
-      badge: "24/7",
+      badge: "API",
     },
     {
       id: "make",

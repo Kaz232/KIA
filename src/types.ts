@@ -4,6 +4,7 @@ export interface User {
   id: string;
   name: string;
   email: string;
+  phone?: string;
   role: UserRole;
   avatarUrl?: string;
 }
@@ -375,6 +376,7 @@ export interface AuditLog {
   previousHash?: string;
   confirmationGranted?: boolean;
   ipOrEnv?: string;
+  confidenceScore?: number;
 }
 
 export interface SystemSettings {
@@ -395,6 +397,7 @@ export interface SystemSettings {
   wakeWordTriggerPhrase?: string;
   wakeWordSoundFeedback?: boolean;
   wakeWordAutoSubmitCommand?: boolean;
+  workspaceStudioEnabled?: boolean;
 }
 
 export interface AuthSession {
@@ -453,6 +456,56 @@ export interface WhatsAppConfig {
   emergencyPhoneAlert?: string;
 }
 
+export type GagExportDocumentType =
+  | "COMMERCIAL_PROPOSAL"
+  | "EXECUTIVE_REPORT"
+  | "MEETING_MINUTES"
+  | "CREATIVE_BRIEF"
+  | "SERVICE_ORDER"
+  | "CUSTOM_DOCUMENT";
+
+export type GagExportFormat =
+  | "pdf"
+  | "docx"
+  | "markdown"
+  | "html"
+  | "whatsapp"
+  | "json"
+  | "csv";
+
+export interface GagDocumentItem {
+  description: string;
+  quantity?: number;
+  unitPriceAOA: number;
+  totalAOA: number;
+}
+
+export interface GagDocumentData {
+  id?: string;
+  title: string;
+  type: GagExportDocumentType;
+  clientName: string;
+  companyName: string;
+  clientPhone?: string;
+  clientEmail?: string;
+  date?: string;
+  validityDays?: number;
+  summary: string;
+  items?: GagDocumentItem[];
+  totalAmountAOA?: number;
+  require50PercentDeposit?: boolean;
+  urgency48h?: boolean;
+  includeTaxRetention?: boolean;
+  includeIVA?: boolean;
+  contentMarkdown?: string;
+  notesAndDirectives?: string[];
+  author?: string;
+  customLogoUrl?: string;
+  nif?: string;
+  iban?: string;
+  bankName?: string;
+}
+
 export type NavigationTab =
   | "dashboard"
   | "kia"
@@ -470,3 +523,29 @@ export type NavigationTab =
   | "audit"
   | "incidents"
   | "settings";
+
+export interface GenerativeToolField {
+  key: string;
+  label: string;
+  type: "text" | "textarea" | "select" | "number";
+  placeholder?: string;
+  defaultValue?: string;
+  options?: string[];
+  required?: boolean;
+}
+
+export interface GenerativeTool {
+  id: string;
+  name: string;
+  description: string;
+  sourceId: string;
+  sourceType: "knowledge" | "skill" | "manual";
+  category: "CONTENT" | "DESIGN" | "COMMERCIAL" | "STRATEGY" | "ENGINEERING" | "FINANCE";
+  iconName?: string;
+  inputFields: GenerativeToolField[];
+  promptTemplate: string;
+  outputFormats: string[];
+  createdAt: string;
+  usageCount: number;
+}
+

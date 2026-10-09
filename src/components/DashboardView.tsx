@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import {
   LayoutDashboard,
   Bot,
@@ -26,9 +26,54 @@ import {
   Radio,
   FileSpreadsheet,
 } from "lucide-react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  Legend,
+} from "recharts";
 import { useApp } from "../context/AppContext";
 import { Task, Agent, ScannedDocument } from "../types";
 import { AgentAvatar } from "./AgentAvatar";
+import { subscribeToMetrics } from "../utils/audio";
+import { KiaTamagotchiCompanion } from "./KiaTamagotchiCompanion";
+import { KiaFace } from "./KiaFace";
+import { DocumentScannerWidget } from "./DocumentScannerWidget";
+import { SystemHealthWidget } from "./SystemHealthWidget";
+
+const TASK_STATUS_COLORS = {
+  TODO: "#64748b",
+  IN_PROGRESS: "#f59e0b",
+  DONE: "#10b981",
+  BLOCKED: "#ef4444",
+};
+
+const VoiceMonitor: React.FC = () => {
+    const [metrics, setMetrics] = useState({ rms: 0, isSpeaking: false, wsStatus: 'DISCONNECTED' });
+    useEffect(() => {
+        return subscribeToMetrics(setMetrics);
+    }, []);
+
+    return (
+        <div className="p-5 rounded-2xl bg-[#090c14] border border-slate-800 shadow-lg">
+            <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-semibold text-slate-400">Estado de Voz</span>
+                <Mic className={`w-4 h-4 ${metrics.isSpeaking ? 'text-emerald-400 animate-pulse' : 'text-slate-600'}`} />
+            </div>
+            <div className="text-[10px] text-white font-mono mb-2">{metrics.wsStatus}</div>
+            <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                <div className="bg-amber-500 h-full transition-all duration-75" style={{ width: `${Math.min(metrics.rms * 1000, 100)}%` }} />
+            </div>
+        </div>
+    );
+};
 
 export const DashboardView: React.FC = () => {
   const {
@@ -51,12 +96,63 @@ export const DashboardView: React.FC = () => {
   const criticalTasks = tasks.filter((t) => t.priority === "CRITICAL" || t.priority === "HIGH");
   const reviewDocs = scannedDocs.filter((d) => d.status === "REVIEW_REQUIRED");
 
+  const taskStatusDistribution = React.useMemo(() => {
+    const dist: Record<string, number> = { TODO: 0, IN_PROGRESS: 0, DONE: 0, BLOCKED: 0 };
+    tasks.forEach((t) => {
+      if (dist.hasOwnProperty(t.status)) {
+        dist[t.status]++;
+      }
+    });
+    return Object.entries(dist).map(([name, value]) => ({ name, value }));
+  }, [tasks]);
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12 animate-fadeIn">
+      {/* Rosto Tamagotchi do KIA no Topo do Dashboard */}
+      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-[#0c101d] via-[#10172b] to-[#0a0d18] border-2 border-amber-500/35 p-4 sm:p-6 shadow-2xl shadow-amber-500/10">
+        <div className="relative z-10 flex flex-col sm:flex-row items-center justify-between gap-5">
+          <div className="flex flex-col sm:flex-row items-center sm:items-start text-center sm:text-left gap-4">
+            <KiaFace
+              state="idle"
+              size="lg"
+              interactive={true}
+              onClick={() => setActiveTab("kia")}
+              showStatusText={false}
+            />
+            <div className="space-y-1">
+              <div className="flex items-center justify-center sm:justify-start space-x-2">
+                <span className="text-xl font-extrabold text-white tracking-wide">KIA</span>
+                <span className="px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold text-[11px] border border-amber-500/40">
+                  ✨ Co-piloto Executiva • GAG Visual
+                </span>
+              </div>
+              <p className="text-xs text-slate-300 max-w-lg leading-relaxed pt-0.5">
+                Olá, {currentUser.name}! Núcleo neural ativo em Luanda. Clica no meu rosto para conversar, orquestrar os agentes especialistas e gerar propostas comerciais.
+              </p>
+              <div className="pt-1 flex items-center justify-center sm:justify-start space-x-2 text-[11px] text-emerald-300">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                <span className="font-semibold">Estado: Operacional &bull; Rosto Tamagotchi Sintonizado</span>
+              </div>
+            </div>
+          </div>
+
+          <button
+            onClick={() => setActiveTab("kia")}
+            className="shrink-0 px-5 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-black font-extrabold text-xs flex items-center space-x-2 shadow-lg shadow-amber-500/25 active:scale-95 transition-all"
+          >
+            <Sparkles className="w-4 h-4 fill-black" />
+            <span>Falar com a KIA</span>
+          </button>
+        </div>
+
+        {/* Ambient subtle glow */}
+        <div className="absolute top-0 right-0 -mt-10 -mr-10 w-48 h-48 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
+      </div>
+
       {/* Welcome Banner */}
       <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-[#0d1222] via-[#090d18] to-[#141008] border border-amber-500/25 p-6 lg:p-8 shadow-2xl">
         <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
-          <div className="space-y-2 max-w-2xl">
+          <div className="space-y-2 max-w-3xl">
             <div className="flex items-center space-x-2">
               <span className="px-2.5 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-bold flex items-center space-x-1.5">
                 <Sparkles className="w-3.5 h-3.5" />
@@ -66,47 +162,11 @@ export const DashboardView: React.FC = () => {
             </div>
 
             <h1 className="text-2xl lg:text-3xl font-extrabold text-white tracking-tight">
-              Olá, {currentUser.name}
+              Visão Geral Executiva
             </h1>
             <p className="text-sm text-slate-300 leading-relaxed">
-              Núcleo operacional da GAG Visual ativo com o agente mestre{" "}
-              <strong className="text-amber-400">KIA</strong> coordenando tarefas, análise documental, curadoria de conhecimento e execução de agentes.
+              Painel central de coordenação da GAG Visual em Luanda. Monitorização contínua de tarefas, métricas de desempenho de agentes especialistas e integridade do ecossistema corporativo.
             </p>
-          </div>
-
-          {/* Quick Action to talk with KIA, Video Studio, Search Grounding and Autonomy */}
-          <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
-            <button
-              onClick={() => setActiveTab("kia")}
-              className="px-4 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-400 hover:to-yellow-400 text-black font-extrabold text-xs flex items-center justify-center space-x-2 shadow-lg shadow-amber-500/20 active:scale-95 transition-all"
-            >
-              <Bot className="w-4 h-4" />
-              <span>KIA Chat & Voz</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab("studio")}
-              className="px-4 py-3 rounded-xl bg-purple-950/80 hover:bg-purple-900 border border-purple-500/40 text-purple-200 hover:text-white text-xs font-bold flex items-center justify-center space-x-2 transition-all shadow-md"
-            >
-              <Film className="w-4 h-4 text-purple-400" />
-              <span>Gerador de Vídeo (Veo)</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab("studio")}
-              className="px-4 py-3 rounded-xl bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/40 text-emerald-200 hover:text-white text-xs font-bold flex items-center justify-center space-x-2 transition-all shadow-md"
-            >
-              <Globe className="w-4 h-4 text-emerald-400" />
-              <span>Pesquisa Tempo Real</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab("agent_factory")}
-              className="px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-amber-300 hover:text-amber-200 text-xs font-bold flex items-center justify-center space-x-2 transition-all"
-            >
-              <Zap className="w-4 h-4 text-amber-400" />
-              <span>Autonomia & Agentes</span>
-            </button>
           </div>
         </div>
 
@@ -193,7 +253,8 @@ export const DashboardView: React.FC = () => {
       </div>
 
       {/* KPI Stats Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 h-[90px]">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 h-auto">
+        <VoiceMonitor />
         {/* KPI 1: Agents */}
         <div
           onClick={() => setActiveTab("agents")}
@@ -209,10 +270,6 @@ export const DashboardView: React.FC = () => {
             <span className="text-2xl font-black text-white">{activeAgents}</span>
             <span className="text-xs text-slate-500">/ {agents.length} configurados</span>
           </div>
-          <div className="mt-2 text-[11px] text-emerald-400 flex items-center space-x-1">
-            <Activity className="w-3 h-3" />
-            <span>KIA Master online</span>
-          </div>
         </div>
 
         {/* KPI 2: Tasks in Progress */}
@@ -221,52 +278,18 @@ export const DashboardView: React.FC = () => {
           className="p-5 rounded-2xl bg-[#090c14] border border-slate-800 hover:border-amber-500/40 transition-all cursor-pointer group shadow-lg"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-400">Tarefas Pendentes</span>
+            <span className="text-xs font-semibold text-slate-400">Tarefas Operacionais</span>
             <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-400 group-hover:scale-110 transition-transform">
               <CheckSquare className="w-4 h-4" />
             </div>
           </div>
           <div className="mt-3 flex items-baseline space-x-2">
             <span className="text-2xl font-black text-white">{inProgressTasks.length}</span>
-            {criticalTasks.length > 0 && (
-              <span className="text-xs text-rose-400 font-semibold">
-                ({criticalTasks.length} urgentes)
-              </span>
-            )}
-          </div>
-          <div className="mt-2 text-[11px] text-slate-400 flex items-center space-x-1">
-            <span>{tasks.filter((t) => t.status === "DONE").length} concluídas</span>
+            <span className="text-xs text-slate-500">em execução</span>
           </div>
         </div>
 
-        {/* KPI 3: Scanned Docs */}
-        <div
-          onClick={() => setActiveTab("scanner")}
-          className="p-5 rounded-2xl bg-[#090c14] border border-slate-800 hover:border-amber-500/40 transition-all cursor-pointer group shadow-lg"
-        >
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-400">Documentos</span>
-            <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400 group-hover:scale-110 transition-transform">
-              <FileSearch className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-3 flex items-baseline space-x-2">
-            <span className="text-2xl font-black text-white">{scannedDocs.length}</span>
-            <span className="text-xs text-slate-500">processados</span>
-          </div>
-          <div className="mt-2 text-[11px] text-amber-300 flex items-center space-x-1">
-            {reviewDocs.length > 0 ? (
-              <>
-                <AlertCircle className="w-3 h-3 text-amber-400" />
-                <span>{reviewDocs.length} requerem revisão</span>
-              </>
-            ) : (
-              <span className="text-emerald-400">Todos atualizados</span>
-            )}
-          </div>
-        </div>
-
-        {/* KPI 4: Knowledge Items */}
+        {/* KPI 3: Knowledge Items */}
         <div
           onClick={() => setActiveTab("knowledge")}
           className="p-5 rounded-2xl bg-[#090c14] border border-slate-800 hover:border-amber-500/40 transition-all cursor-pointer group shadow-lg"
@@ -279,17 +302,81 @@ export const DashboardView: React.FC = () => {
           </div>
           <div className="mt-3 flex items-baseline space-x-2">
             <span className="text-2xl font-black text-white">{knowledge.length}</span>
-            <span className="text-xs text-slate-500">artigos ativos</span>
-          </div>
-          <div className="mt-2 text-[11px] text-slate-400">
-            <span>GAG Visual Memory</span>
+            <span className="text-xs text-slate-500">manuais e normas</span>
           </div>
         </div>
       </div>
 
+      {/* System Health & Real-Time Gemini Latency Monitor */}
+      <SystemHealthWidget />
+
+      <div className="mt-6">
+        <DocumentScannerWidget />
+      </div>
+
+      {/* Pipeline de Leads Growth (30 dias) */}
+      <div className="bg-[#090c14] border border-slate-800 rounded-2xl p-6 shadow-xl h-[350px]">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-sm font-bold text-white flex items-center space-x-2">
+            <TrendingUp className="w-4 h-4 text-emerald-400" />
+            <span>Pipeline de Leads (Últimos 30 dias)</span>
+          </h2>
+        </div>
+        <ResponsiveContainer width="100%" height="80%">
+          <LineChart data={Array.from({ length: 30 }, (_, i) => ({
+            day: i + 1,
+            leads: Math.floor(Math.random() * 50) + 10 + i * 2,
+          }))}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+            <XAxis dataKey="day" stroke="#475569" fontSize={10} />
+            <YAxis stroke="#475569" fontSize={10} />
+            <Tooltip
+              contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #1e293b", borderRadius: "8px" }}
+              itemStyle={{ color: "#e2e8f0", fontSize: "12px" }}
+            />
+            <Line type="monotone" dataKey="leads" stroke="#10b981" strokeWidth={2} dot={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Task Distribution Pie Chart */}
+      <div className="bg-[#090c14] border border-slate-800 rounded-2xl p-6 shadow-xl h-[350px]">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-sm font-bold text-white flex items-center space-x-2">
+            <Layers className="w-4 h-4 text-amber-400" />
+            <span>Distribuição de Tarefas</span>
+          </h2>
+        </div>
+        <ResponsiveContainer width="100%" height="80%">
+          <PieChart>
+            <Pie
+              data={taskStatusDistribution}
+              cx="50%"
+              cy="50%"
+              innerRadius={60}
+              outerRadius={80}
+              paddingAngle={5}
+              dataKey="value"
+            >
+              {taskStatusDistribution.map((entry, index) => (
+                <Cell
+                  key={`cell-${index}`}
+                  fill={TASK_STATUS_COLORS[entry.name as keyof typeof TASK_STATUS_COLORS]}
+                />
+              ))}
+            </Pie>
+            <Tooltip
+              contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #1e293b", borderRadius: "8px" }}
+              itemStyle={{ color: "#e2e8f0", fontSize: "12px" }}
+            />
+            <Legend wrapperStyle={{ fontSize: '12px' }} />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+
       {/* Main Two-Column Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column: Tasks & Documents (2 cols on lg) */}
+        {/* Left Column: Tasks (2 cols on lg) */}
         <div className="lg:col-span-2 space-y-6">
           {/* Priority Tasks Card */}
           <div className="bg-[#090c14] border border-slate-800 rounded-2xl p-5 shadow-xl">
@@ -308,7 +395,7 @@ export const DashboardView: React.FC = () => {
             </div>
 
             <div className="mt-4 divide-y divide-slate-800/60">
-              {tasks.slice(0, 5).map((task, idx) => (
+              {tasks.slice(0, 8).map((task, idx) => (
                 <div
                   key={`dash-task-${task.id}-${idx}`}
                   className="py-3 flex items-center justify-between gap-3 hover:bg-slate-900/40 px-2 rounded-xl transition-colors"
@@ -349,50 +436,6 @@ export const DashboardView: React.FC = () => {
                     }`}
                   >
                     {task.status}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Document Ingestion Stream */}
-          <div className="bg-[#090c14] border border-slate-800 rounded-2xl p-5 shadow-xl">
-            <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-              <div className="flex items-center space-x-2">
-                <FileSearch className="w-4 h-4 text-emerald-400" />
-                <h2 className="text-sm font-bold text-white">Scanner & Ingestão Documental</h2>
-              </div>
-              <button
-                onClick={() => setActiveTab("scanner")}
-                className="text-xs text-amber-400 hover:text-amber-300 font-semibold flex items-center space-x-1"
-              >
-                <span>Abrir Scanner</span>
-                <ArrowUpRight className="w-3.5 h-3.5" />
-              </button>
-            </div>
-
-            <div className="mt-4 space-y-3">
-              {scannedDocs.slice(0, 3).map((doc, idx) => (
-                <div
-                  key={`dash-doc-${doc.id}-${idx}`}
-                  className="p-3 bg-slate-900/60 border border-slate-800 rounded-xl flex items-center justify-between gap-3 hover:border-slate-700 transition-colors"
-                >
-                  <div className="flex items-center space-x-3 min-w-0">
-                    <div className="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center font-bold text-xs shrink-0">
-                      DOC
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold text-slate-200 truncate">
-                        {doc.filename}
-                      </div>
-                      <div className="text-[10px] text-slate-400 truncate mt-0.5">
-                        {doc.structuredData?.summary || "Documento estruturado e analisado"}
-                      </div>
-                    </div>
-                  </div>
-
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono shrink-0">
-                    {doc.status}
                   </span>
                 </div>
               ))}

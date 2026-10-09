@@ -320,16 +320,27 @@ makeRouter.post("/inbound/:scenarioId?", async (req, res) => {
       try {
         const apiKey = process.env.GEMINI_API_KEY;
         if (apiKey) {
-          const ai = new GoogleGenAI({ apiKey });
+          const ai = new GoogleGenAI({
+            apiKey,
+            httpOptions: { headers: { "User-Agent": "aistudio-build" } },
+          });
           const prompt = `És o agente comercial e de atendimento 24/7 da GAG Visual no WhatsApp (Luanda, Angola).
 O cliente ${senderName} (${senderNumber}) enviou a mensagem: "${message}".
 Gera uma resposta acolhedora, executiva, comercial e calorosa (valores em Kwanzas AOA se aplicável). Máximo 2 a 3 frases.`;
 
-          const gen = await ai.models.generateContent({
-            model: "gemini-3.7-flash",
-            contents: prompt,
-          });
-          aiReply = gen.text?.trim() || "";
+          const candidateModels = ["gemini-3.6-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
+          for (const model of candidateModels) {
+            try {
+              const gen = await ai.models.generateContent({
+                model,
+                contents: prompt,
+              });
+              aiReply = gen.text?.trim() || "";
+              if (aiReply) break;
+            } catch (mErr) {
+              console.warn(`[Make Inbound] Model ${model} failed, trying fallback:`, mErr);
+            }
+          }
         }
       } catch (e) {
         console.warn("Make Inbound AI generation fallback:", e);

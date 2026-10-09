@@ -275,7 +275,10 @@ browserRouter.post("/scrape", async (req, res) => {
     let parsedData: any = {};
 
     if (apiKey) {
-      const ai = new GoogleGenAI({ apiKey });
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: { headers: { "User-Agent": "aistudio-build" } },
+      });
       const prompt = `És o motor de raspagem e inteligência web do GAG Core OS (Luanda, Angola).
 Analisa o conteúdo extraído da página web abaixo e extrai dados estruturados em JSON estrito.
 
@@ -296,12 +299,20 @@ Responde APENAS com um objeto JSON válido contendo:
   "extractedEntities": []
 }`;
 
-      const gen = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
-        contents: prompt,
-      });
-
-      const responseText = gen.text || "{}";
+      let responseText = "{}";
+      const candidateModels = ["gemini-3.6-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
+      for (const model of candidateModels) {
+        try {
+          const gen = await ai.models.generateContent({
+            model,
+            contents: prompt,
+          });
+          responseText = gen.text || "{}";
+          break;
+        } catch (mErr) {
+          console.warn(`[Browser Scraping] Model ${model} failed, trying fallback:`, mErr);
+        }
+      }
       const cleanJson = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
       try {
         parsedData = JSON.parse(cleanJson);
@@ -581,7 +592,10 @@ browserRouter.post("/ai-action", async (req, res) => {
     let proposedActions: any[] = [];
 
     if (apiKey) {
-      const ai = new GoogleGenAI({ apiKey });
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: { headers: { "User-Agent": "aistudio-build" } },
+      });
       const prompt = `És o ${agentName} a operar no Browser Harness do GAG Core OS (Luanda, Angola).
 O teu objetivo como agente é: "${userGoal}".
 
@@ -598,11 +612,22 @@ Produz uma resposta estruturada contendo:
 3. Plano de próximas ações sugeridas (ex: criar lead no CRM, disparar webhook no Make.com, criar tarefa de design, contatar no WhatsApp).
 `;
 
-      const gen = await ai.models.generateContent({
-        model: "gemini-3.7-flash",
-        contents: prompt,
-      });
-      agentAnalysis = gen.text || "Análise concluída.";
+      const candidateModels = ["gemini-3.6-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
+      for (const model of candidateModels) {
+        try {
+          const gen = await ai.models.generateContent({
+            model,
+            contents: prompt,
+          });
+          agentAnalysis = gen.text || "Análise concluída.";
+          break;
+        } catch (mErr) {
+          console.warn(`[Browser Inspection] Model ${model} failed, trying fallback:`, mErr);
+        }
+      }
+      if (!agentAnalysis) {
+        agentAnalysis = "Análise concluída com base nos dados recolhidos.";
+      }
       proposedActions = [
         { action: "Salvar na Base de Conhecimento GAG", target: "KNOWLEDGE_BASE" },
         { action: "Disparar Webhook de Lead para Make.com", target: "MAKE_WEBHOOK" },

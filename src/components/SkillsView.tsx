@@ -12,12 +12,21 @@ import {
   Copy,
   Check,
   Zap,
+  Brain,
+  Bot,
+  X,
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
-import { Skill } from "../types";
+import { Skill, GenerativeTool } from "../types";
 
 export const SkillsView: React.FC = () => {
-  const { skills } = useApp();
+  const {
+    skills,
+    taughtKnowledgeIds,
+    teachSkillToKia,
+    transformToGenerativeTool,
+    setActiveTab,
+  } = useApp();
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("ALL");
@@ -30,6 +39,8 @@ export const SkillsView: React.FC = () => {
   const [testResult, setTestResult] = useState<any | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [copiedResult, setCopiedResult] = useState(false);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [createdToolModal, setCreatedToolModal] = useState<GenerativeTool | null>(null);
 
   const categories: { id: string; label: string }[] = [
     { id: "ALL", label: "Todas as Categorias" },
@@ -54,6 +65,27 @@ export const SkillsView: React.FC = () => {
     setSelectedSkill(skill);
     setTestPayloadStr(JSON.stringify(skill.inputSchema.sample || {}, null, 2));
     setTestResult(null);
+  };
+
+  const handleTeachSkill = async (skill: Skill) => {
+    const res = await teachSkillToKia(skill);
+    setActionNotice(res.message);
+    setTimeout(() => setActionNotice(null), 4000);
+  };
+
+  const handleTransformSkill = async (skill: Skill) => {
+    const res = await transformToGenerativeTool({
+      id: skill.id,
+      title: skill.name,
+      type: "skill",
+      description: skill.description,
+      category: skill.category === "GENERATION" ? "CONTENT" : "STRATEGY",
+    });
+    if (res.success && res.tool) {
+      setCreatedToolModal(res.tool);
+      setActionNotice(`Skill "${skill.name}" transformada em Ferramenta Generativa!`);
+      setTimeout(() => setActionNotice(null), 4000);
+    }
   };
 
   const handleExecuteSkill = async () => {
@@ -161,9 +193,17 @@ export const SkillsView: React.FC = () => {
                 }`}
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                    {skill.category}
-                  </span>
+                  <div className="flex items-center space-x-1.5">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                      {skill.category}
+                    </span>
+                    {taughtKnowledgeIds.includes(skill.id) && (
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center space-x-1">
+                        <Brain className="w-2.5 h-2.5 text-emerald-400" />
+                        <span>KIA Ativa</span>
+                      </span>
+                    )}
+                  </div>
                   <span className="text-[9px] font-mono text-slate-400">v{skill.version}</span>
                 </div>
 

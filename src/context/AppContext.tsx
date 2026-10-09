@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
-import { AlertTriangle, ExternalLink, X, ShieldAlert } from "lucide-react";
+import { AlertTriangle, ExternalLink, X, ShieldAlert, CheckCircle2 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   User,
@@ -24,6 +24,8 @@ import {
   FinancialAnalysis,
   WhatsAppMessageLog,
   WhatsAppConfig,
+  GagDocumentData,
+  GenerativeTool,
 } from "../types";
 import {
   INITIAL_USER,
@@ -50,6 +52,7 @@ import {
 } from "../services/supabaseAuth";
 import { dbClient, SupabaseHealthState } from "../persistence/supabaseClient";
 import { ensureSentenceSanity } from "../services/kiaRobustChat";
+import { safeStorage } from "../utils/safeStorage";
 import {
   auth as firebaseAuth,
   signInWithGoogle as firebaseSignInWithGoogle,
@@ -99,6 +102,10 @@ interface AppContextType {
   tasks: Task[];
   events: CalendarEvent[];
   auditLogs: AuditLog[];
+  
+  // Entity pre-filling
+  prefilledData: Record<string, any> | null;
+  setPrefilledData: (data: Record<string, any> | null) => void;
   chatMessages: ChatMessage[];
   setChatMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
   systemSettings: SystemSettings;
@@ -116,6 +123,10 @@ interface AppContextType {
   setIsScenarioModalOpen: (open: boolean) => void;
   isKazaModalOpen: boolean;
   setIsKazaModalOpen: (open: boolean) => void;
+  isDocumentExportModalOpen: boolean;
+  setIsDocumentExportModalOpen: (open: boolean) => void;
+  exportModalDocumentData: Partial<GagDocumentData> | null;
+  openDocumentExportModal: (data?: Partial<GagDocumentData>) => void;
 
   // KIA & Execution Actions
   isKiaThinking: boolean;
@@ -142,6 +153,7 @@ interface AppContextType {
   deleteTask: (id: string) => void;
   executeTaskWithAgent: (taskId: string, agentId?: string) => Promise<{ success: boolean; task?: Task }>;
   executeBatchTasks: (taskIds?: string[]) => Promise<{ completedCount: number }>;
+  executeCancelledTasks: () => Promise<{ completedCount: number; tasks: Task[] }>;
   orchestratePlanWithKIA: (goal: string) => Promise<KIAOrchestrationResult>;
   executeEnginePipeline: (request: Phase1ExecutionRequest) => Promise<Phase1ExecutionResponse>;
   runPhase1EngineTests: () => Promise<TestSuiteResponse>;
@@ -166,6 +178,17 @@ interface AppContextType {
 
   // Skill Actions
   executeSkillLive: (skillId: string, payload: any) => Promise<any>;
+
+  // KIA Knowledge & Generative Tools
+  taughtKnowledgeIds: string[];
+  generativeTools: GenerativeTool[];
+  isTeachingToKia: boolean;
+  teachKnowledgeToKia: (item: KnowledgeItem | { title: string; content: string; category?: string; tags?: string[] }) => Promise<{ success: boolean; message: string }>;
+  teachSkillToKia: (skill: Skill) => Promise<{ success: boolean; message: string }>;
+  teachAllKnowledgeToKia: () => Promise<{ success: boolean; count: number; message: string }>;
+  transformToGenerativeTool: (source: { id: string; title: string; type: "knowledge" | "skill"; content?: string; description?: string; category?: any; customPromptTemplate?: string }) => Promise<{ success: boolean; tool: GenerativeTool }>;
+  executeGenerativeTool: (toolId: string, inputs: Record<string, any>) => Promise<any>;
+  fetchGenerativeTools: () => Promise<GenerativeTool[]>;
 
   // Calendar Actions
   createEvent: (event: Omit<CalendarEvent, "id">) => void;
@@ -221,6 +244,11 @@ interface AppContextType {
   } | null;
   showQuotaToast: (customMessage?: string, details?: string) => void;
   dismissQuotaToast: () => void;
+
+  // Autonomous Agent Toast Notification System
+  toasts: { id: string; message: string; type: 'success' | 'warning' | 'info' }[];
+  addToast: (message: string, type: 'success' | 'warning' | 'info', duration?: number) => void;
+  dismissToast: (id: string) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -244,21 +272,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   
   // Auth state
   const [currentUser, setCurrentUser] = useState<User>(() => {
-    const saved = localStorage.getItem("gag_auth_user");
-    return saved ? JSON.parse(saved) : INITIAL_USER;
+    return safeStorage.getParsed<User>("gag_auth_user", INITIAL_USER);
   });
 
   const [activeRole, setActiveRoleState] = useState<UserRole>(() => {
-    return (localStorage.getItem("gag_active_role") as UserRole) || currentUser.role || "OWNER";
+    return (safeStorage.getItem("gag_active_role") as UserRole) || currentUser.role || "OWNER";
   });
 
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => {
-    const saved = localStorage.getItem("gag_auth_session");
-    return saved ? JSON.parse(saved) : { user: INITIAL_USER, provider: "local_os" };
+    return safeStorage.getParsed<AuthSession>("gag_auth_session", { user: INITIAL_USER, provider: "local_os" });
   });
 
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    const savedToken = localStorage.getItem("gag_is_authenticated");
+    const savedToken = safeStorage.getItem("gag_is_authenticated");
     return savedToken !== "false";
   });
 
@@ -286,6 +312,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     details?: string;
     billingUrl: string;
   } | null>(null);
+
+  // Autonomous Agent Toast Notification State
+  const [toasts, setToasts] = useState<{ id: string; message: string; type: 'success' | 'warning' | 'info' }[]>([]);
+
+  const addToast = (message: string, type: 'success' | 'warning' | 'info', duration: number = 5000) => {
+    const id = Math.random().toString(36).substring(2, 9);
+    setToasts((prev) => [...prev, { id, message, type }]);
+    setTimeout(() => dismissToast(id), duration);
+  };
+
+  const dismissToast = (id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  };
 
   const showQuotaToast = (customMessage?: string, details?: string) => {
     setQuotaToast({
@@ -337,7 +376,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const [agents, setAgents] = useState<Agent[]>(() => {
-    const saved = localStorage.getItem("gag_agents");
+    const saved = safeStorage.getItem("gag_agents");
     if (!saved) return ensureStrictUniqueItems(INITIAL_AGENTS, "agent");
     try {
       const parsed: Agent[] = JSON.parse(saved);
@@ -361,7 +400,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [skills] = useState<Skill[]>(INITIAL_SKILLS);
 
   const [knowledge, setKnowledge] = useState<KnowledgeItem[]>(() => {
-    const saved = localStorage.getItem("gag_knowledge");
+    const saved = safeStorage.getItem("gag_knowledge");
     if (!saved) return ensureStrictUniqueItems(INITIAL_KNOWLEDGE, "kb");
     try {
       const parsed: KnowledgeItem[] = JSON.parse(saved);
@@ -378,8 +417,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   });
 
+  const [taughtKnowledgeIds, setTaughtKnowledgeIds] = useState<string[]>(() => {
+    const saved = safeStorage.getItem("gag_taught_knowledge_ids");
+    if (!saved) return ["kb-001", "gag-branding-2026", "gag-politica-comercial-50", "gag-imobiliario-elite"];
+    try {
+      return JSON.parse(saved);
+    } catch {
+      return ["kb-001", "gag-branding-2026", "gag-politica-comercial-50"];
+    }
+  });
+
+  const [generativeTools, setGenerativeTools] = useState<GenerativeTool[]>([]);
+  const [isTeachingToKia, setIsTeachingToKia] = useState(false);
+
   const [scannedDocs, setScannedDocs] = useState<ScannedDocument[]>(() => {
-    const saved = localStorage.getItem("gag_scanned_docs");
+    const saved = safeStorage.getItem("gag_scanned_docs");
     if (!saved) return [];
     try {
       return ensureStrictUniqueItems(JSON.parse(saved), "doc");
@@ -389,7 +441,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [tasks, setTasks] = useState<Task[]>(() => {
-    const saved = localStorage.getItem("gag_tasks");
+    const saved = safeStorage.getItem("gag_tasks");
     if (!saved) return ensureStrictUniqueItems(INITIAL_TASKS, "task");
     try {
       const parsed: Task[] = JSON.parse(saved);
@@ -399,8 +451,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   });
 
+  // const [prefilledData, setPrefilledData] = useState<Record<string, any> | null>(null);
+  const [prefilledData, setPrefilledData] = useState<Record<string, any> | null>(null);
+
   const [events, setEvents] = useState<CalendarEvent[]>(() => {
-    const saved = localStorage.getItem("gag_events");
+    const saved = safeStorage.getItem("gag_events");
     if (!saved) return ensureStrictUniqueItems(INITIAL_EVENTS, "ev");
     try {
       const parsed: CalendarEvent[] = JSON.parse(saved);
@@ -411,7 +466,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => {
-    const saved = localStorage.getItem("gag_audit_logs");
+    const saved = safeStorage.getItem("gag_audit_logs");
     if (!saved) return ensureStrictUniqueItems(INITIAL_AUDIT_LOGS, "aud");
     try {
       const parsed: AuditLog[] = JSON.parse(saved);
@@ -422,7 +477,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [systemSettings, setSystemSettings] = useState<SystemSettings>(() => {
-    const saved = localStorage.getItem("gag_settings");
+    const saved = safeStorage.getItem("gag_settings");
     const supabaseCfg = getSupabaseConfig();
     if (saved) {
       try {
@@ -464,17 +519,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       autoAudioTts: true,
       voiceName: "Kore",
       voiceContinuous: false,
-      voiceVadEnabled: true,
-      voiceSilenceDelayMs: 1200,
+      voiceVadEnabled: false,
+      voiceSilenceDelayMs: 7000,
       wakeWordEnabled: false,
       wakeWordTriggerPhrase: "kia",
       wakeWordSoundFeedback: false,
       wakeWordAutoSubmitCommand: true,
+      workspaceStudioEnabled: false,
     };
   });
 
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>(() => {
-    const saved = localStorage.getItem("gag_chat_messages");
+    const saved = safeStorage.getItem("gag_chat_messages");
     if (saved) {
       try {
         const parsed: ChatMessage[] = JSON.parse(saved);
@@ -504,88 +560,53 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isKiaThinking, setIsKiaThinking] = useState(false);
   const [isExecutingTask, setIsExecutingTask] = useState(false);
   const [showSynergyTour, setShowSynergyTour] = useState<boolean>(() => {
-    return localStorage.getItem("gag_synergy_onboarding_seen") !== "true";
+    return safeStorage.getItem("gag_synergy_onboarding_seen") !== "true";
   });
 
   // Enterprise Feature Modals & Execution States
   const [isSynergyModalOpen, setIsSynergyModalOpen] = useState(false);
   const [isScenarioModalOpen, setIsScenarioModalOpen] = useState(false);
   const [isKazaModalOpen, setIsKazaModalOpen] = useState(false);
+  const [isDocumentExportModalOpen, setIsDocumentExportModalOpen] = useState(false);
+  const [exportModalDocumentData, setExportModalDocumentData] = useState<Partial<GagDocumentData> | null>(null);
+
+  const openDocumentExportModal = (data?: Partial<GagDocumentData>) => {
+    if (data) {
+      setExportModalDocumentData(data);
+    }
+    setIsDocumentExportModalOpen(true);
+  };
 
   const [synergyRuns, setSynergyRuns] = useState<SynergyRun[]>(() => {
-    const saved = localStorage.getItem("gag_synergy_runs");
-    return saved ? JSON.parse(saved) : [];
+    return safeStorage.getParsed<SynergyRun[]>("gag_synergy_runs", []);
   });
 
   const [scenarioSimulations, setScenarioSimulations] = useState<ScenarioSimulation[]>(() => {
-    const saved = localStorage.getItem("gag_scenario_simulations");
-    return saved ? JSON.parse(saved) : [];
+    return safeStorage.getParsed<ScenarioSimulation[]>("gag_scenario_simulations", []);
   });
 
   const [webhookEvents, setWebhookEvents] = useState<KazaWebhookEvent[]>(() => {
-    const saved = localStorage.getItem("gag_webhook_events");
-    return saved ? JSON.parse(saved) : [];
+    return safeStorage.getParsed<KazaWebhookEvent[]>("gag_webhook_events", []);
   });
 
   const [financialAnalyses, setFinancialAnalyses] = useState<FinancialAnalysis[]>(() => {
-    const saved = localStorage.getItem("gag_financial_analyses");
-    return saved ? JSON.parse(saved) : [];
+    return safeStorage.getParsed<FinancialAnalysis[]>("gag_financial_analyses", []);
   });
 
   // WhatsApp 24/7 Agent Hub State
   const [whatsappLogs, setWhatsappLogs] = useState<WhatsAppMessageLog[]>(() => {
-    const saved = localStorage.getItem("gag_whatsapp_logs");
+    const saved = safeStorage.getItem("gag_whatsapp_logs");
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed: WhatsAppMessageLog[] = JSON.parse(saved);
+        // Filter out any legacy dummy records
+        const realLogs = parsed.filter((l) => !l.id.startsWith("wa-init-"));
+        return realLogs;
       } catch {
         // fallback
       }
     }
-    return [
-      {
-        id: "wa-init-01",
-        senderNumber: "+244 923 456 789",
-        senderName: "Dr. Manuel Kwanza (Lead B2B)",
-        message: "Olá GAG Visual, preciso de orçamento para rebranding e gestão de redes sociais da nossa clínica.",
-        receivedAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-        routedAgent: "agent-consultant",
-        routedAgentName: "Agente Consultor Comercial",
-        aiResponse: "Olá Dr. Manuel! Agradecemos o contacto com a GAG Visual. Para branding e gestão estratégica de clínicas em Angola, dispomos de pacotes completos com métricas de captação de pacientes. Qual a data pretendida para o início do projeto?",
-        status: "REPLIED_24_7",
-        channel: "WhatsApp Cloud API",
-        sentiment: "OPPORTUNITY",
-        autoTaskCreated: true,
-      },
-      {
-        id: "wa-init-02",
-        senderNumber: "+244 945 112 334",
-        senderName: "Eng.ª Teresa Silva (Cliente Ativo)",
-        message: "Boa tarde, podem enviar o relatório de tráfego pago desta semana?",
-        receivedAt: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
-        routedAgent: "agent-traffic",
-        routedAgentName: "Agente Gestor de Tráfego",
-        aiResponse: "Boa tarde, Eng.ª Teresa! O relatório da semana 34 já foi compilado pelo nosso sistema com ROAS de 4.8x. Enviámos uma cópia em PDF para o seu e-mail e o resumo está disponível no painel.",
-        status: "REPLIED_24_7",
-        channel: "WhatsApp Cloud API",
-        sentiment: "POSITIVE",
-        autoTaskCreated: false,
-      },
-      {
-        id: "wa-init-03",
-        senderNumber: "+244 912 887 654",
-        senderName: "Carlos Mendes (Startup Tech)",
-        message: "Vocês desenvolvem agentes de inteligência artificial personalizados integrados ao WhatsApp para empresas?",
-        receivedAt: new Date(Date.now() - 120 * 60 * 1000).toISOString(),
-        routedAgent: "agent-kia",
-        routedAgentName: "KIA Master Agent",
-        aiResponse: "Olá Carlos! Sim, na GAG Visual somos pioneiros em Angola no desenvolvimento e orquestração de agentes de IA autónomos (GAG Core OS) conectados ao WhatsApp Business API, CRM e sistemas de faturação. Gostaria de agendar uma sessão demonstrativa executiva?",
-        status: "REPLIED_24_7",
-        channel: "WhatsApp Cloud API",
-        sentiment: "OPPORTUNITY",
-        autoTaskCreated: true,
-      }
-    ];
+    return [];
   });
 
   const [whatsappConfig, setWhatsappConfig] = useState<WhatsAppConfig>({
@@ -600,10 +621,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     businessHoursOnly: false,
     defaultAgent: "agent-consultant",
     welcomeMessage: "Olá! Bem-vindo à GAG Visual. Como podemos acelerar o seu negócio hoje?",
-    emergencyPhoneAlert: "+244 923 000 000",
+    emergencyPhoneAlert: "+244 922 835 116",
   });
 
   const [isWhatsAppLoading, setIsWhatsAppLoading] = useState<boolean>(false);
+
+  useEffect(() => {
+    fetchGenerativeTools();
+  }, []);
 
   // Auth State & Supabase Session Initialization
   useEffect(() => {
@@ -624,8 +649,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               provider: "supabase",
             });
             setIsAuthenticated(true);
-            localStorage.setItem("gag_is_authenticated", "true");
-            localStorage.setItem("gag_auth_user", JSON.stringify(user));
+            safeStorage.setItem("gag_is_authenticated", "true");
+            safeStorage.setItem("gag_auth_user", JSON.stringify(user));
           }
         }
       } catch (err) {
@@ -656,14 +681,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             provider: "supabase",
           });
           setIsAuthenticated(true);
-          localStorage.setItem("gag_is_authenticated", "true");
-          localStorage.setItem("gag_auth_user", JSON.stringify(mapped));
+          safeStorage.setItem("gag_is_authenticated", "true");
+          safeStorage.setItem("gag_auth_user", JSON.stringify(mapped));
           recordAuditLog("Autenticação Supabase", "conversation", "SUCCESS", `Sessão iniciada: ${mapped.email}`);
         } else if (event === "SIGNED_OUT") {
           setAuthSession(null);
           // Keep local profile but require sign-in
           setIsAuthenticated(false);
-          localStorage.setItem("gag_is_authenticated", "false");
+          safeStorage.setItem("gag_is_authenticated", "false");
           recordAuditLog("Término de Sessão Supabase", "conversation", "SUCCESS", "Sessão encerrada.");
         }
       });
@@ -688,8 +713,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           provider: "local_os",
         });
         setIsAuthenticated(true);
-        localStorage.setItem("gag_is_authenticated", "true");
-        localStorage.setItem("gag_auth_user", JSON.stringify(mappedUser));
+        safeStorage.setItem("gag_is_authenticated", "true");
+        safeStorage.setItem("gag_auth_user", JSON.stringify(mappedUser));
         await syncUserProfile(fbUser, mappedUser.role);
         recordAuditLog("Autenticação Google Firebase", "conversation", "SUCCESS", `Sessão iniciada via Google: ${fbUser.email}`);
       }
@@ -733,8 +758,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       provider: "local_os",
     });
     setIsAuthenticated(true);
-    localStorage.setItem("gag_is_authenticated", "true");
-    localStorage.setItem("gag_auth_user", JSON.stringify(mappedUser));
+    safeStorage.setItem("gag_is_authenticated", "true");
+    safeStorage.setItem("gag_auth_user", JSON.stringify(mappedUser));
     await syncUserProfile(fbUser, mappedUser.role);
     recordAuditLog("Login Google Bem-Sucedido", "conversation", "SUCCESS", `Utilizador: ${mappedUser.email} (${mappedUser.role})`);
     playSfx("success");
@@ -764,8 +789,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         provider: "supabase",
       });
       setIsAuthenticated(true);
-      localStorage.setItem("gag_is_authenticated", "true");
-      localStorage.setItem("gag_auth_user", JSON.stringify(res.user));
+      safeStorage.setItem("gag_is_authenticated", "true");
+      safeStorage.setItem("gag_auth_user", JSON.stringify(res.user));
       recordAuditLog("Login Supabase Bem-Sucedido", "conversation", "SUCCESS", `Utilizador: ${res.user.email} (${res.user.role})`);
       playSfx("success");
       return { success: true };
@@ -802,8 +827,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           provider: "supabase",
         });
         setIsAuthenticated(true);
-        localStorage.setItem("gag_is_authenticated", "true");
-        localStorage.setItem("gag_auth_user", JSON.stringify(res.user));
+        safeStorage.setItem("gag_is_authenticated", "true");
+        safeStorage.setItem("gag_auth_user", JSON.stringify(res.user));
       }
       recordAuditLog("Novo Registo Supabase", "conversation", "SUCCESS", `Conta criada para: ${res.user.email} (${role})`);
       playSfx("success");
@@ -821,7 +846,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     await supabaseSignOut();
     setAuthSession(null);
     setIsAuthenticated(false);
-    localStorage.setItem("gag_is_authenticated", "false");
+    safeStorage.setItem("gag_is_authenticated", "false");
     recordAuditLog("Terminar Sessão", "conversation", "SUCCESS", `Sessão encerrada para ${currentUser.email}`);
   };
 
@@ -852,9 +877,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       provider: "local_os",
     });
     setIsAuthenticated(true);
-    localStorage.setItem("gag_is_authenticated", "true");
-    localStorage.setItem("gag_auth_user", JSON.stringify(localUser));
-    localStorage.setItem("gag_active_role", role);
+    safeStorage.setItem("gag_is_authenticated", "true");
+    safeStorage.setItem("gag_auth_user", JSON.stringify(localUser));
+    safeStorage.setItem("gag_active_role", role);
     recordAuditLog("Autenticação Local / Sandbox", "conversation", "SUCCESS", `Sessão local ativa: ${localUser.name} (${role})`);
     playSfx("success");
   };
@@ -879,58 +904,58 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  // Sync to LocalStorage
+  // Sync to Storage
   useEffect(() => {
-    localStorage.setItem("gag_agents", JSON.stringify(agents));
+    safeStorage.setItem("gag_agents", JSON.stringify(agents));
   }, [agents]);
 
   useEffect(() => {
-    localStorage.setItem("gag_knowledge", JSON.stringify(knowledge));
+    safeStorage.setItem("gag_knowledge", JSON.stringify(knowledge));
   }, [knowledge]);
 
   useEffect(() => {
-    localStorage.setItem("gag_scanned_docs", JSON.stringify(scannedDocs));
+    safeStorage.setItem("gag_scanned_docs", JSON.stringify(scannedDocs));
   }, [scannedDocs]);
 
   useEffect(() => {
-    localStorage.setItem("gag_tasks", JSON.stringify(tasks));
+    safeStorage.setItem("gag_tasks", JSON.stringify(tasks));
   }, [tasks]);
 
   useEffect(() => {
-    localStorage.setItem("gag_events", JSON.stringify(events));
+    safeStorage.setItem("gag_events", JSON.stringify(events));
   }, [events]);
 
   useEffect(() => {
-    localStorage.setItem("gag_audit_logs", JSON.stringify(auditLogs));
+    safeStorage.setItem("gag_audit_logs", JSON.stringify(auditLogs));
   }, [auditLogs]);
 
   useEffect(() => {
-    localStorage.setItem("gag_chat_messages", JSON.stringify(chatMessages));
+    safeStorage.setItem("gag_chat_messages", JSON.stringify(chatMessages));
   }, [chatMessages]);
 
   useEffect(() => {
-    localStorage.setItem("gag_settings", JSON.stringify(systemSettings));
+    safeStorage.setItem("gag_settings", JSON.stringify(systemSettings));
   }, [systemSettings]);
 
   useEffect(() => {
-    localStorage.setItem("gag_synergy_runs", JSON.stringify(synergyRuns));
+    safeStorage.setItem("gag_synergy_runs", JSON.stringify(synergyRuns));
   }, [synergyRuns]);
 
   useEffect(() => {
-    localStorage.setItem("gag_scenario_simulations", JSON.stringify(scenarioSimulations));
+    safeStorage.setItem("gag_scenario_simulations", JSON.stringify(scenarioSimulations));
   }, [scenarioSimulations]);
 
   useEffect(() => {
-    localStorage.setItem("gag_webhook_events", JSON.stringify(webhookEvents));
+    safeStorage.setItem("gag_webhook_events", JSON.stringify(webhookEvents));
   }, [webhookEvents]);
 
   useEffect(() => {
-    localStorage.setItem("gag_financial_analyses", JSON.stringify(financialAnalyses));
+    safeStorage.setItem("gag_financial_analyses", JSON.stringify(financialAnalyses));
   }, [financialAnalyses]);
 
   const setActiveRole = (role: UserRole) => {
     setActiveRoleState(role);
-    localStorage.setItem("gag_active_role", role);
+    safeStorage.setItem("gag_active_role", role);
     recordAuditLog(
       `Alteração de Papel Ativo para ${role}`,
       "internal_tool",
@@ -1046,9 +1071,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         let doneData: any = null;
 
         try {
+          const token = await firebaseAuth.currentUser?.getIdToken();
           const response = await fetch("/api/kia/stream", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { 
+              "Content-Type": "application/json",
+              ...(token ? { "Authorization": `Bearer ${token}` } : {})
+            },
             body: JSON.stringify({
               message: text,
               history: chatMessages.slice(-10).map((m) => ({
@@ -1117,9 +1146,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             showQuotaToast();
           }
 
+          const token = await firebaseAuth.currentUser?.getIdToken();
           const fallbackRes = await fetch("/api/kia/chat", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { 
+              "Content-Type": "application/json",
+              ...(token ? { "Authorization": `Bearer ${token}` } : {})
+            },
             body: JSON.stringify({
               message: text,
               history: chatMessages.slice(-10).map((m) => ({
@@ -1149,8 +1182,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         }
 
-        const rawContent = doneData?.fullContent || doneData?.content || accumulatedContent || "Instrução processada com sucesso.";
-        const finalContent = ensureSentenceSanity(rawContent);
+        const rawContent = doneData?.fullContent || doneData?.content || accumulatedContent || "Compreendido perfeitamente. Estou pronta para continuarmos.";
+        const sanitizedContent = rawContent
+          .replace(/<(?:interpretacao|think)>[\s\S]*?<\/(?:interpretacao|think)>/gi, "")
+          .replace(/<\/?(?:interpretacao|think)>/gi, "")
+          .replace(/^\[(?:AGENTE|AGENT):[^\]]*\]\s*/gim, "")
+          .replace(/^(?:ARTIFACT|CRM|PRÓXIMO|PROXIMO):\s*/gim, "")
+          .replace(/Instrução processada com sucesso\.?/gi, "")
+          .trim();
+        const finalContent = ensureSentenceSanity(sanitizedContent);
 
         // Check if action payload requires automatic state execution & API dispatch
         if (doneData?.actionPayload) {
@@ -1219,6 +1259,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               description: "Diagnóstico de integridade validado e trilha de auditoria sincronizada.",
               actionLabel: "Ver Gestor de Incidentes",
               actionUrl: "#tab=incidents",
+            };
+          } else if (
+            payload.type === "execute_cancelled_tasks" ||
+            payload.type === "execute_tasks" ||
+            doneData.intent === "execute_cancelled_tasks" ||
+            (text.toLowerCase().includes("cancelad") && (text.toLowerCase().includes("execut") || text.toLowerCase().includes("wxwcut")))
+          ) {
+            void executeCancelledTasks();
+            doneData.actionCard = {
+              type: "task_executed",
+              title: "⚡ Execução de Tarefas Canceladas",
+              description: "Reativação e conclusão autónoma de tarefas canceladas no GAG Core OS.",
+              actionLabel: "Ver no Backlog de Tarefas",
+              actionUrl: "#tab=tasks",
             };
           }
         }
@@ -1347,6 +1401,209 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setKnowledge((prev) => prev.filter((k) => k.id !== id));
     recordAuditLog("Eliminar Artigo do Knowledge Base", "knowledge", "SUCCESS", `ID: ${id}`);
     playSfx("warning");
+  };
+
+  // KIA Knowledge Teaching & Generative Tools Actions
+  const teachKnowledgeToKia = async (
+    item: KnowledgeItem | { title: string; content: string; category?: string; tags?: string[] }
+  ): Promise<{ success: boolean; message: string }> => {
+    setIsTeachingToKia(true);
+    try {
+      const res = await fetch("/api/kia/teach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "knowledge", item }),
+      });
+      const data = await res.json();
+      const itemId = (item as KnowledgeItem).id || `kb-${Date.now()}`;
+      setTaughtKnowledgeIds((prev) => {
+        const updated = Array.from(new Set([...prev, itemId]));
+        safeStorage.setItem("gag_taught_knowledge_ids", JSON.stringify(updated));
+        return updated;
+      });
+      recordAuditLog(
+        "Ensinar Conhecimento à KIA",
+        "knowledge",
+        "SUCCESS",
+        `Conhecimento "${item.title}" absorvido pelo cérebro da KIA.`
+      );
+      playSfx("success");
+      return {
+        success: true,
+        message: data.message || `Conhecimento "${item.title}" assimilado com sucesso pela KIA!`,
+      };
+    } catch (err: any) {
+      const itemId = (item as KnowledgeItem).id || `kb-local-${Date.now()}`;
+      setTaughtKnowledgeIds((prev) => {
+        const updated = Array.from(new Set([...prev, itemId]));
+        safeStorage.setItem("gag_taught_knowledge_ids", JSON.stringify(updated));
+        return updated;
+      });
+      return {
+        success: true,
+        message: `Conhecimento "${item.title}" registado localmente no cérebro da KIA.`,
+      };
+    } finally {
+      setIsTeachingToKia(false);
+    }
+  };
+
+  const teachSkillToKia = async (skill: Skill): Promise<{ success: boolean; message: string }> => {
+    setIsTeachingToKia(true);
+    try {
+      const res = await fetch("/api/kia/teach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "skill", item: skill }),
+      });
+      const data = await res.json();
+      setTaughtKnowledgeIds((prev) => {
+        const updated = Array.from(new Set([...prev, skill.id]));
+        safeStorage.setItem("gag_taught_knowledge_ids", JSON.stringify(updated));
+        return updated;
+      });
+      recordAuditLog("Ensinar Skill à KIA", "skill_executed", "SUCCESS", `Skill "${skill.name}" atribuída à KIA.`);
+      playSfx("success");
+      return {
+        success: true,
+        message: data.message || `Skill "${skill.name}" ensinada à KIA com sucesso!`,
+      };
+    } catch (err: any) {
+      setTaughtKnowledgeIds((prev) => Array.from(new Set([...prev, skill.id])));
+      return {
+        success: true,
+        message: `Skill "${skill.name}" assimilada no catálogo de capacidades da KIA.`,
+      };
+    } finally {
+      setIsTeachingToKia(false);
+    }
+  };
+
+  const teachAllKnowledgeToKia = async (): Promise<{ success: boolean; count: number; message: string }> => {
+    setIsTeachingToKia(true);
+    try {
+      const res = await fetch("/api/kia/teach", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "batch", items: knowledge }),
+      });
+      const data = await res.json();
+      const allIds = knowledge.map((k) => k.id);
+      setTaughtKnowledgeIds((prev) => {
+        const updated = Array.from(new Set([...prev, ...allIds]));
+        safeStorage.setItem("gag_taught_knowledge_ids", JSON.stringify(updated));
+        return updated;
+      });
+      recordAuditLog(
+        "Injeção Completa de Conhecimento na KIA",
+        "knowledge",
+        "SUCCESS",
+        `Toda a base de conhecimento (${knowledge.length} artigos) ensinada à KIA.`
+      );
+      playSfx("success");
+      return {
+        success: true,
+        count: knowledge.length,
+        message: data.message || `Toda a base (${knowledge.length} artigos) foi ensinada à KIA com sucesso!`,
+      };
+    } catch (err: any) {
+      const allIds = knowledge.map((k) => k.id);
+      setTaughtKnowledgeIds((prev) => Array.from(new Set([...prev, ...allIds])));
+      return {
+        success: true,
+        count: knowledge.length,
+        message: `Base de conhecimento (${knowledge.length} artigos) assimilada na memória ativa da KIA.`,
+      };
+    } finally {
+      setIsTeachingToKia(false);
+    }
+  };
+
+  const transformToGenerativeTool = async (source: {
+    id: string;
+    title: string;
+    type: "knowledge" | "skill";
+    content?: string;
+    description?: string;
+    category?: any;
+    customPromptTemplate?: string;
+  }): Promise<{ success: boolean; tool: GenerativeTool }> => {
+    try {
+      const res = await fetch("/api/kia/transform-tool", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sourceId: source.id,
+          sourceType: source.type,
+          title: source.title,
+          description: source.description || source.content?.slice(0, 150),
+          category: source.category,
+          customPromptTemplate: source.customPromptTemplate,
+        }),
+      });
+      const data = await res.json();
+      if (data.success && data.tool) {
+        setGenerativeTools((prev) => [data.tool, ...prev.filter((t) => t.id !== data.tool.id)]);
+        recordAuditLog(
+          "Transformar em Ferramenta Generativa",
+          "agent_factory",
+          "SUCCESS",
+          `Nova ferramenta generativa: "${data.tool.name}"`
+        );
+        playSfx("success");
+        return { success: true, tool: data.tool };
+      }
+      throw new Error(data.error || "Erro ao transformar em ferramenta generativa.");
+    } catch (err: any) {
+      const fallbackTool: GenerativeTool = {
+        id: `tool-gen-${Date.now()}`,
+        name: `Gerador: ${source.title}`,
+        description: `Ferramenta generativa configurada a partir de ${source.title}.`,
+        sourceId: source.id,
+        sourceType: source.type,
+        category: "CONTENT",
+        inputFields: [
+          { key: "contexto", label: "Contexto / Briefing", type: "textarea", placeholder: "Descreve os requisitos...", required: true },
+          { key: "tomDeVoz", label: "Tom de Voz", type: "select", options: ["Executivo e Sofisticado", "Persuasivo de Alta Conversão", "Técnico e Minucioso"], defaultValue: "Executivo e Sofisticado" },
+        ],
+        promptTemplate: `Atua como consultora da GAG Visual. Produz o entregável para ${source.title} com base em: {{contexto}}, tom: {{tomDeVoz}}.`,
+        outputFormats: ["markdown", "whatsapp"],
+        createdAt: new Date().toISOString(),
+        usageCount: 0,
+      };
+      setGenerativeTools((prev) => [fallbackTool, ...prev]);
+      return { success: true, tool: fallbackTool };
+    }
+  };
+
+  const executeGenerativeTool = async (toolId: string, inputs: Record<string, any>) => {
+    try {
+      const res = await fetch("/api/kia/execute-generative-tool", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toolId, inputs }),
+      });
+      const data = await res.json();
+      recordAuditLog("Execução de Ferramenta Generativa", "agent_factory", "SUCCESS", `Ferramenta ${toolId}`);
+      playSfx("success");
+      return data;
+    } catch (err: any) {
+      return { success: false, error: err?.message || "Falha na execução da ferramenta generativa." };
+    }
+  };
+
+  const fetchGenerativeTools = async (): Promise<GenerativeTool[]> => {
+    try {
+      const res = await fetch("/api/kia/generative-tools");
+      const data = await res.json();
+      if (data.success && Array.isArray(data.tools)) {
+        setGenerativeTools(data.tools);
+        return data.tools;
+      }
+    } catch (err) {
+      console.warn("[fetchGenerativeTools] Error:", err);
+    }
+    return [];
   };
 
   // Task Actions
@@ -1600,6 +1857,46 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setIsExecutingTask(false);
     playSfx("success");
     return { completedCount: count };
+  };
+
+  // Execute All Cancelled Tasks — Reativar e processar todas as tarefas canceladas
+  const executeCancelledTasks = async (): Promise<{ completedCount: number; tasks: Task[] }> => {
+    // Sincronizar com o background worker
+    try {
+      fetch("/api/engine/worker/execute-cancelled", { method: "POST" }).catch(() => {});
+    } catch {}
+
+    const cancelledTasks = tasks.filter((t) => t.status === "CANCELLED");
+
+    if (cancelledTasks.length === 0) {
+      console.log("[AppContext] Nenhuma tarefa cancelada no backlog para executar.");
+      playSfx("notification");
+      return { completedCount: 0, tasks: [] };
+    }
+
+    setIsExecutingTask(true);
+    playSfx("execute");
+
+    const executedTasks: Task[] = [];
+    for (const task of cancelledTasks) {
+      const res = await executeTaskWithAgent(task.id, task.assignedAgentId);
+      if (res.success && res.task) {
+        executedTasks.push(res.task);
+      }
+    }
+
+    messageQueue.runInBackground(() => {
+      recordAuditLog(
+        "Reativação em Lote de Tarefas Canceladas",
+        "task",
+        "SUCCESS",
+        `Execução concluída para ${executedTasks.length} tarefas previamente canceladas.`
+      );
+    });
+
+    setIsExecutingTask(false);
+    playSfx("success");
+    return { completedCount: executedTasks.length, tasks: executedTasks };
   };
 
   // Autonomous Agent Operating System (AOS) — High-Level KIA Orchestrator
@@ -2440,7 +2737,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Sync WhatsApp logs to localStorage
   useEffect(() => {
-    localStorage.setItem("gag_whatsapp_logs", JSON.stringify(whatsappLogs));
+    safeStorage.setItem("gag_whatsapp_logs", JSON.stringify(whatsappLogs));
   }, [whatsappLogs]);
 
   // Fetch initial WhatsApp status
@@ -2654,6 +2951,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         tasks,
         events,
         auditLogs,
+        prefilledData,
+        setPrefilledData,
         chatMessages,
         systemSettings,
         showSynergyTour,
@@ -2668,6 +2967,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setIsScenarioModalOpen,
         isKazaModalOpen,
         setIsKazaModalOpen,
+        isDocumentExportModalOpen,
+        setIsDocumentExportModalOpen,
+        exportModalDocumentData,
+        openDocumentExportModal,
         isKiaThinking,
         setIsKiaThinking,
         sendKiaMessage,
@@ -2687,6 +2990,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteTask,
         executeTaskWithAgent,
         executeBatchTasks,
+        executeCancelledTasks,
         orchestratePlanWithKIA,
         executeEnginePipeline,
         runPhase1EngineTests,
@@ -2707,6 +3011,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         executeSkillLive,
         createEvent,
         deleteEvent,
+        taughtKnowledgeIds,
+        generativeTools,
+        isTeachingToKia,
+        teachKnowledgeToKia,
+        teachSkillToKia,
+        teachAllKnowledgeToKia,
+        transformToGenerativeTool,
+        executeGenerativeTool,
+        fetchGenerativeTools,
         whatsappLogs,
         whatsappConfig,
         isWhatsAppLoading,
@@ -2725,6 +3038,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         quotaToast,
         showQuotaToast,
         dismissQuotaToast,
+        toasts,
+        addToast,
+        dismissToast,
       }}
     >
       {children}

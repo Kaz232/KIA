@@ -443,6 +443,30 @@ export const SettingsView: React.FC = () => {
           </div>
         </div>
 
+        {/* Google Workspace Settings */}
+        <div className="bg-[#0b0f19] border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+          <div className="flex items-center space-x-2 pb-3 border-b border-slate-800">
+            <Globe className="w-4 h-4 text-amber-400" />
+            <h2 className="text-sm font-bold text-white">Google Workspace</h2>
+          </div>
+
+          <div className="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800">
+            <div className="flex items-center space-x-2">
+              <Sparkles className="w-4 h-4 text-amber-400" />
+              <div>
+                <span className="font-semibold text-white">Workspace Studio</span>
+                <p className="text-[10px] text-slate-400">Ativar integração com Google Workspace Studio</p>
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={systemSettings.workspaceStudioEnabled ?? false}
+              onChange={(e) => updateSettings({ workspaceStudioEnabled: e.target.checked })}
+              className="w-4 h-4 text-amber-500 accent-amber-500 rounded cursor-pointer"
+            />
+          </div>
+        </div>
+
         {/* Full System Backup Export & Import */}
         <div className="bg-[#0b0f19] border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
           <div className="flex items-center space-x-2 pb-3 border-b border-slate-800">
